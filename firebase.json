@@ -1,0 +1,37 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "hosting": {
+    "public": "petday---ai-pet-pov-insights/dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/uploads/**",
+        "run": {
+          "serviceId": "petday-api",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "petday-api",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
