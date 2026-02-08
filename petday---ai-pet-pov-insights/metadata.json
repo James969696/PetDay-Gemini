@@ -1,0 +1,8 @@
+{
+  "name": "PetDay - AI Pet POV Insights",
+  "description": "An AI-powered platform that analyzes pet POV camera footage to generate emotional stories, behavioral trends, and highlight reels using Gemini 3.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

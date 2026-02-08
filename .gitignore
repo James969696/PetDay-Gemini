@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files (contain API keys)
+.env.local
+.env
+
+# Large video folders
+Vedio/
+ExampleVedio/
+
+# Runtime data
+backend/outputs/
+backend/uploads/
+backend/samples/
+
+# Large sample videos in public (keep images)
+petday---ai-pet-pov-insights/public/samples/*.mp4
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Error logs
+error/
+
+# Firebase cache
+.firebase/
+
+# Next.js cache
+.next/
+
+# Server logs
+backend/server.log

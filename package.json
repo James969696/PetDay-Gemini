@@ -1,0 +1,11 @@
+{
+  "name": "petday-gemini-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "npx concurrently -n \"BACKEND,FRONTEND\" -c \"yellow,cyan\" \"cd backend && npx ts-node --esm server.ts\" \"cd petday---ai-pet-pov-insights && npm run dev\"",
+    "install-all": "npm install && cd backend && npm install && cd ../petday---ai-pet-pov-insights && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+dist
+uploads
+outputs
+server.log
+.env
+.env.*
+*.tsbuildinfo
