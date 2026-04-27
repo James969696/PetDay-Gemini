@@ -22,25 +22,35 @@ const Gallery: React.FC<GalleryProps> = ({ onSelect }) => {
   const [selectedPet, setSelectedPet] = useState<string>('All');
 
   useEffect(() => {
-    const fetchSessions = async () => {
-      try {
-        const response = await fetch(apiUrl('/api/sessions'));
-        const data = await response.json();
-        setSessions(data);
-      } catch (err) {
-        console.error('Failed to fetch sessions:', err);
-      } finally {
-        setIsLoading(false);
-      }
+    const allSessions: Map<string, Session> = new Map();
+
+    const mergeAndRender = () => {
+      setSessions(Array.from(allSessions.values()));
+      setIsLoading(false);
     };
 
-    fetchSessions();
+    // Fetch samples and user sessions independently
+    fetch(apiUrl('/api/sample-sessions'))
+      .then(res => res.json())
+      .then((samples: any[]) => {
+        samples.forEach(s => { if (s.id) allSessions.set(s.id, s); });
+        mergeAndRender();
+      })
+      .catch(err => console.error('Failed to fetch sample sessions:', err));
+
+    fetch(apiUrl('/api/sessions'))
+      .then(res => res.json())
+      .then((data: any[]) => {
+        data.forEach(s => { if (s.id && !allSessions.has(s.id)) allSessions.set(s.id, s); });
+        mergeAndRender();
+      })
+      .catch(err => console.error('Failed to fetch sessions:', err));
   }, []);
 
   return (
-    <div className="p-8 pb-20 max-w-7xl mx-auto">
+    <div className="p-4 md:p-8 pb-20 max-w-7xl mx-auto pt-16 md:pt-8">
       <header className="mb-12">
-        <h1 className="text-4xl font-black tracking-tight">Stories Gallery</h1>
+        <h1 className="text-2xl md:text-4xl font-black tracking-tight">Stories Gallery</h1>
         <p className="text-slate-400 mt-2 text-lg">Rewatch and explore your pet's best moments through their eyes.</p>
 
         <div className="flex flex-col lg:flex-row gap-4 mt-10">
@@ -123,7 +133,7 @@ const Gallery: React.FC<GalleryProps> = ({ onSelect }) => {
           </div>
         ))}
 
-        <div onClick={() => window.location.reload()} className="group border-2 border-dashed border-warm-gray/30 rounded-[2rem] flex flex-col items-center justify-center p-12 hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer min-h-[400px]">
+        <div onClick={() => window.location.reload()} className="group border-2 border-dashed border-warm-gray/30 rounded-[2rem] flex flex-col items-center justify-center p-8 md:p-12 hover:border-primary/50 hover:bg-primary/5 transition-all cursor-pointer min-h-[200px] md:min-h-[400px]">
           <div className="bg-primary/10 group-hover:bg-primary text-primary group-hover:text-background-dark size-20 rounded-[2rem] flex items-center justify-center mb-6 transition-all rotate-12 group-hover:rotate-0">
             <span className="material-symbols-outlined !text-4xl">add</span>
           </div>

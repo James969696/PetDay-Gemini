@@ -11,6 +11,7 @@ dist/
 # Large video folders
 Vedio/
 ExampleVedio/
+ExampleVideo/
 
 # Runtime data
 backend/outputs/
@@ -29,6 +30,11 @@ error/
 
 # Firebase cache
 .firebase/
+
+# Local agent/tooling artifacts
+.claude/
+**/.claude/
+screenshot/
 
 # Next.js cache
 .next/

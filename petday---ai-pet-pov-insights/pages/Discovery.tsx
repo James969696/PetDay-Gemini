@@ -49,7 +49,7 @@ function sessionToPost(session: any, index: number): Post | null {
   if (!session || session.status !== 'ready') return null;
   const analysis = session.analysis;
   const firstFriend = analysis?.friends?.[0];
-  const petImg = firstFriend?.url || '';
+  const petImg = firstFriend?.url || session.coverUrl || '';
   const petBreed = firstFriend?.breed || firstFriend?.species || 'Mixed';
   const moodTag = analysis?.moodData?.[0]?.name || analysis?.title || 'Adventure';
   const petType = session.petType === 'dog' ? 'Dog' : session.petType === 'cat' ? 'Cat' : 'Other';
@@ -84,45 +84,51 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
 
   useEffect(() => {
     const visitorId = getVisitorId();
-    const fetchPosts = async () => {
-      try {
-        const [sampleRes, sessionRes] = await Promise.all([
-          fetch(apiUrl('/api/sample-sessions')),
-          fetch(apiUrl(`/api/sessions?visitorId=${encodeURIComponent(visitorId)}`)),
-        ]);
-        const samples = await sampleRes.json();
-        const userSessions = await sessionRes.json();
 
-        const allSessions = [...samples, ...userSessions];
-        const seen = new Set<string>();
-        const unique = allSessions.filter((s: any) => {
-          if (!s.id || seen.has(s.id)) return false;
-          seen.add(s.id);
-          return true;
-        });
-
-        const built: Post[] = [];
-        const friends: {name: string; breed: string; img: string}[] = [];
-        unique.forEach((session: any, idx: number) => {
-          const post = sessionToPost(session, idx);
-          if (post && post.thumbnail) built.push(post);
-          // Collect unique friends for sidebar
-          const analysis = session.analysis;
-          if (analysis?.friends) {
-            for (const f of analysis.friends) {
-              if (f.url && f.name && friends.length < 6 && !friends.find(x => x.name === f.name)) {
-                friends.push({ name: f.name, breed: f.breed || f.species || 'Pet', img: f.url });
-              }
+    const buildFromSessions = (sessions: any[]) => {
+      const built: Post[] = [];
+      const friends: {name: string; breed: string; img: string}[] = [];
+      sessions.forEach((session: any, idx: number) => {
+        const post = sessionToPost(session, idx);
+        if (post && post.thumbnail) built.push(post);
+        const analysis = session.analysis;
+        if (analysis?.friends) {
+          for (const f of analysis.friends) {
+            if (f.url && f.name && friends.length < 6 && !friends.find(x => x.name === f.name)) {
+              friends.push({ name: f.name, breed: f.breed || f.species || 'Pet', img: f.url });
             }
           }
-        });
-        setPosts(built);
-        setRecommendedPets(friends.slice(0, 3));
-      } catch (err) {
-        console.error('Failed to fetch discovery posts:', err);
-      }
+        }
+      });
+      return { built, friends };
     };
-    fetchPosts();
+
+    // Track all loaded sessions, deduplicated
+    const allSessions: Map<string, any> = new Map();
+
+    const mergeAndRender = () => {
+      const unique = Array.from(allSessions.values());
+      const { built, friends } = buildFromSessions(unique);
+      setPosts(built);
+      setRecommendedPets(friends.slice(0, 3));
+    };
+
+    // Fetch independently — whoever arrives first renders first
+    fetch(apiUrl('/api/sample-sessions'))
+      .then(res => res.json())
+      .then((samples: any[]) => {
+        samples.forEach(s => { if (s.id) allSessions.set(s.id, s); });
+        mergeAndRender();
+      })
+      .catch(err => console.error('Failed to fetch sample sessions:', err));
+
+    fetch(apiUrl(`/api/sessions?visitorId=${encodeURIComponent(visitorId)}`))
+      .then(res => res.json())
+      .then((sessions: any[]) => {
+        sessions.forEach(s => { if (s.id && !allSessions.has(s.id)) allSessions.set(s.id, s); });
+        mergeAndRender();
+      })
+      .catch(err => console.error('Failed to fetch user sessions:', err));
   }, []);
 
   const toggleFollow = (name: string) => {
@@ -152,13 +158,13 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
     : posts.filter(p => p.petType === (filter === 'Dogs' ? 'Dog' : 'Cat'));
 
   return (
-    <div className="p-8 pb-32 max-w-7xl mx-auto">
+    <div className="p-4 md:p-8 pb-32 max-w-7xl mx-auto pt-16 md:pt-8">
       <header className="mb-12 flex flex-col lg:flex-row lg:items-end justify-between gap-6">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 mb-4">
             <span className="text-[10px] font-black uppercase tracking-widest text-primary">Global Feed</span>
           </div>
-          <h1 className="text-5xl font-black tracking-tighter">Discovery</h1>
+          <h1 className="text-3xl md:text-5xl font-black tracking-tighter">Discovery</h1>
           <p className="text-slate-400 mt-2 text-lg">Explore the world through thousands of other pets' eyes.</p>
         </div>
         
@@ -167,7 +173,7 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
             <button 
               key={f}
               onClick={() => setFilter(f as any)}
-              className={`px-8 py-2.5 rounded-xl text-sm font-black transition-all ${filter === f ? 'bg-primary text-background-dark shadow-xl' : 'text-slate-400 hover:text-white'}`}
+              className={`px-4 md:px-8 py-2.5 rounded-xl text-sm font-black transition-all ${filter === f ? 'bg-primary text-background-dark shadow-xl' : 'text-slate-400 hover:text-white'}`}
             >
               {f}
             </button>
@@ -182,11 +188,11 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
             {filteredPosts.map((post) => (
               <div 
                 key={post.id} 
-                className="break-inside-avoid bg-surface-dark rounded-[2.5rem] border border-warm-gray/30 overflow-hidden shadow-xl hover:border-primary/50 transition-all group"
+                className="break-inside-avoid bg-surface-dark rounded-2xl md:rounded-[2.5rem] border border-warm-gray/30 overflow-hidden shadow-xl hover:border-primary/50 transition-all group"
               >
                 <div
                   className="relative aspect-video cursor-pointer overflow-hidden"
-                  onClick={onSelect}
+                  onClick={() => { localStorage.setItem('currentSessionId', post.id); onSelect(); }}
                   onMouseEnter={() => post.highlightVideo && handleMouseEnter(post.id)}
                   onMouseLeave={() => post.highlightVideo && handleMouseLeave(post.id)}
                 >
@@ -208,8 +214,12 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-80 pointer-events-none"></div>
                   <div className="absolute top-6 left-6 flex items-center gap-3 z-10">
-                    <div className="size-10 rounded-full border-2 border-white/20 overflow-hidden">
-                      <img src={post.petImg} alt={post.petName} className="w-full h-full object-cover" />
+                    <div className="size-10 rounded-full border-2 border-white/20 overflow-hidden bg-slate-700 flex items-center justify-center">
+                      {post.petImg ? (
+                        <img src={post.petImg} alt={post.petName} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="material-symbols-outlined text-slate-400 !text-lg">pets</span>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs font-black text-white">{post.petName}</p>
@@ -248,7 +258,7 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
             ))}
           </div>
           
-          <div className="p-12 rounded-[3rem] bg-gradient-to-br from-card-dark to-sidebar-dark border border-primary/10 text-center relative overflow-hidden group">
+          <div className="p-6 md:p-12 rounded-2xl md:rounded-[3rem] bg-gradient-to-br from-card-dark to-sidebar-dark border border-primary/10 text-center relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-64 h-64 bg-primary/5 blur-[100px] -ml-32 -mt-32"></div>
             <h3 className="text-3xl font-black mb-4">Want to share your pet's moment?</h3>
             <p className="text-slate-400 max-w-xl mx-auto mb-8 font-medium">
@@ -266,7 +276,7 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
         {/* Right Sidebar */}
         <aside className="w-full lg:w-80 shrink-0 flex flex-col gap-8">
           {/* Trending Topics */}
-          <section className="bg-surface-dark rounded-[2.5rem] border border-warm-gray/30 p-8 shadow-xl">
+          <section className="bg-surface-dark rounded-2xl md:rounded-[2.5rem] border border-warm-gray/30 p-4 md:p-8 shadow-xl">
             <h2 className="text-xl font-bold mb-6 flex items-center gap-3">
               <span className="material-symbols-outlined text-primary">trending_up</span>
               Trending
@@ -288,7 +298,7 @@ const Discovery: React.FC<DiscoveryProps> = ({ onSelect }) => {
           </section>
 
           {/* Pets to Follow */}
-          <section className="bg-surface-dark rounded-[2.5rem] border border-warm-gray/30 p-8 shadow-xl sticky top-8">
+          <section className="bg-surface-dark rounded-2xl md:rounded-[2.5rem] border border-warm-gray/30 p-4 md:p-8 shadow-xl sticky top-8">
             <h2 className="text-xl font-bold mb-6 flex items-center gap-3">
               <span className="material-symbols-outlined text-primary">pets</span>
               Pets to Follow

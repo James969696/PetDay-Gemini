@@ -1,10 +1,13 @@
 
 import React from 'react';
-import { apiUrl } from '../lib/api';
+import { apiUrl, fetchPets } from '../lib/api';
+import { setActivePetId } from '../lib/personaState';
+import { Page } from '../types';
 
 interface DashboardProps {
   onAnalyze: () => void;
   onGallery?: () => void;
+  onNavigate?: (page: Page) => void;
 }
 
 function getVisitorId(): string {
@@ -16,7 +19,7 @@ function getVisitorId(): string {
   return id;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery, onNavigate }) => {
   const visitorId = React.useMemo(() => getVisitorId(), []);
   const [isUploading, setIsUploading] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState(0);
@@ -33,6 +36,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
   const [showExamplePicker, setShowExamplePicker] = React.useState(false);
   const [exampleVideos, setExampleVideos] = React.useState<any[]>([]);
   const [selectedExample, setSelectedExample] = React.useState<any | null>(null);
+  const [petPocket, setPetPocket] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    fetchPets().then(setPetPocket).catch(() => setPetPocket([]));
+  }, []);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -95,36 +103,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
   }, []);
 
   React.useEffect(() => {
-    const fetchRecent = async () => {
+    // Fetch user sessions and samples independently — show whichever arrives first
+    const fetchUserSessions = async () => {
       try {
-        const [sessionsResponse, sampleResponse] = await Promise.all([
-          fetch(apiUrl(`/api/sessions?visitorId=${encodeURIComponent(visitorId)}`)),
-          fetch(apiUrl('/api/sample-sessions'))
-        ]);
-        const sessionsData = await sessionsResponse.json();
-        const sampleData = await sampleResponse.json();
-
-        const formattedSamples = sampleData.map((session: any) =>
-          formatSessionForDashboard({ ...session, isSample: true })
-        );
-
-        const sampleIds = new Set(formattedSamples.map((session: any) => session.id));
-        const formattedRegular = sessionsData
-          .map((session: any) => formatSessionForDashboard(session))
-          .filter((session: any) => !sampleIds.has(session.id));
-
-        const allSessions = [...formattedSamples, ...formattedRegular];
-        setRecentUploads(allSessions);
-
-        // Start polling for any sessions still processing
-        allSessions.forEach(s => {
-          if (s.status === 'processing') pollStatus(s.id);
+        const res = await fetch(apiUrl(`/api/sessions?visitorId=${encodeURIComponent(visitorId)}`));
+        const data = await res.json();
+        const formatted = data.map((session: any) => formatSessionForDashboard(session));
+        setRecentUploads(prev => {
+          const sampleIds = new Set(prev.filter(s => s.isSample).map(s => s.id));
+          const filtered = formatted.filter((s: any) => !sampleIds.has(s.id));
+          return [...prev.filter(s => s.isSample), ...filtered];
         });
+        formatted.forEach((s: any) => { if (s.status === 'processing') pollStatus(s.id); });
       } catch (e) {
-        console.error('Failed to fetch sessions:', e);
+        console.error('Failed to fetch user sessions:', e);
       }
     };
-    fetchRecent();
+
+    const fetchSamples = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/sample-sessions'));
+        const data = await res.json();
+        const formatted = data.map((session: any) => formatSessionForDashboard({ ...session, isSample: true }));
+        setRecentUploads(prev => {
+          const sampleIds = new Set(formatted.map((s: any) => s.id));
+          const nonSamples = prev.filter(s => !s.isSample && !sampleIds.has(s.id));
+          return [...formatted, ...nonSamples];
+        });
+      } catch (e) {
+        console.error('Failed to fetch sample sessions:', e);
+      }
+    };
+
+    fetchUserSessions();
+    fetchSamples();
   }, [pollStatus]);
 
   const readErrorMessage = async (response: Response) => {
@@ -220,6 +232,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
       onProgress(Math.min(100, Math.round((offset / size) * 100)));
     }
   };
+
+  const uploadFileToLocalServer = async (file: File, selectedPetName: string): Promise<string> => {
+    const formData = new FormData();
+    formData.append('video', file);
+    formData.append('petName', selectedPetName);
+    formData.append('visitorId', visitorId);
+
+    setUploadStage('uploading');
+    setUploadProgress(10);
+    const response = await fetch(apiUrl('/api/upload'), {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response));
+    }
+    setUploadProgress(100);
+    const data = await response.json();
+    return data.sessionId as string;
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -266,7 +299,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
         })
       });
       if (!initResponse.ok) {
-        throw new Error(await readErrorMessage(initResponse));
+        const message = await readErrorMessage(initResponse);
+        if (message.includes('Cloud Storage is not configured')) {
+          const sessionId = await uploadFileToLocalServer(file, selectedPetName);
+          activeSessionId = sessionId;
+          const newUpload = {
+            id: sessionId,
+            name: file.name,
+            petName: selectedPetName,
+            date: 'Just now',
+            status: 'processing',
+            size: (file.size / (1024 * 1024)).toFixed(1) + 'MB',
+            isSample: false
+          };
+          setRecentUploads(prev => [newUpload, ...prev.filter(item => item.id !== sessionId)]);
+          pollStatus(sessionId);
+          return;
+        }
+        throw new Error(message);
       }
 
       const initData = await initResponse.json();
@@ -359,10 +409,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   return (
-    <div className="p-8 max-w-6xl mx-auto w-full pb-24">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto w-full pb-24 pt-16 md:pt-8">
       <div className="flex flex-wrap justify-between items-end gap-4 mb-8">
         <div>
-          <h1 className="text-4xl font-black tracking-tight">Upload Pet POV</h1>
+          <h1 className="text-2xl md:text-4xl font-black tracking-tight">Upload Pet POV</h1>
           <p className="text-slate-400 mt-2">Bring your pet's perspective to life with AI</p>
         </div>
         <button className="bg-primary/10 text-primary border border-primary/20 px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-primary hover:text-background-dark transition-all flex items-center gap-2">
@@ -371,10 +421,46 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
         </button>
       </div>
 
+      {/* PetPocket — quick access to existing personas */}
+      {petPocket.length > 0 && (
+        <section className="mb-10">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">My Pets</h2>
+            {onNavigate && (
+              <button onClick={() => onNavigate('pets')} className="text-xs text-primary hover:underline">
+                View all
+              </button>
+            )}
+          </div>
+          <div className="flex gap-4 overflow-x-auto pb-2">
+            {petPocket.slice(0, 8).map((p) => (
+              <button
+                key={p.id}
+                onClick={() => { setActivePetId(p.id); onNavigate?.('pet-chat'); }}
+                className="shrink-0 group flex flex-col items-center gap-2 w-24"
+              >
+                <div
+                  className="size-20 rounded-full bg-warm-gray/30 bg-cover bg-center border-2 border-primary/40 group-hover:border-primary group-hover:scale-105 transition"
+                  style={p.photoUrl ? { backgroundImage: `url('${p.photoUrl}')` } : undefined}
+                >
+                  {!p.photoUrl && (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <span className="material-symbols-outlined text-2xl text-primary">pets</span>
+                    </div>
+                  )}
+                </div>
+                <div className="text-xs font-bold truncate w-full text-center">{p.name}</div>
+                <div className="text-[10px] text-slate-400 -mt-1">{p.growthStageLabel?.zh || '雏形期'}</div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="mb-12">
         <div className="relative group">
           <div className="absolute -inset-1 bg-gradient-to-r from-primary/30 to-primary/10 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
-          <div className="relative flex flex-col items-center justify-center gap-8 rounded-2xl border-2 border-dashed border-warm-gray/50 bg-card-dark px-6 py-20 text-center transition-all hover:border-primary/50">
+          <div className="relative flex flex-col items-center justify-center gap-8 rounded-2xl border-2 border-dashed border-warm-gray/50 bg-card-dark px-6 py-10 md:py-20 text-center transition-all hover:border-primary/50">
             <div className="size-24 rounded-full bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform duration-500">
               <span className="material-symbols-outlined text-5xl">upload_file</span>
             </div>
@@ -479,7 +565,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
           <h2 className="text-2xl font-bold tracking-tight px-1 text-white">Recently Uploaded</h2>
           <button onClick={onGallery} className="text-primary text-sm font-bold hover:underline">View all uploads</button>
         </div>
-        <div className="bg-surface-dark rounded-2xl border border-warm-gray/30 overflow-hidden shadow-sm">
+        {/* Desktop table */}
+        <div className="hidden md:block bg-surface-dark rounded-2xl border border-warm-gray/30 overflow-hidden shadow-sm">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-warm-gray/30 bg-warm-gray/10">
@@ -600,11 +687,99 @@ const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery }) => {
             </tbody>
           </table>
         </div>
+
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-3">
+          {recentUploads.length === 0 ? (
+            <div className="bg-surface-dark rounded-2xl border border-warm-gray/30 p-6 text-center text-slate-500 italic">No recent uploads yet.</div>
+          ) : (
+            recentUploads.map((upload) => (
+              <div key={upload.id} className="bg-surface-dark rounded-2xl border border-warm-gray/30 p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-9 rounded-lg bg-black overflow-hidden flex items-center justify-center border border-warm-gray/30 shrink-0">
+                    {upload.coverUrl ? (
+                      <img src={upload.coverUrl} alt={upload.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="material-symbols-outlined text-slate-500 text-sm">video_file</span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-sm truncate">{upload.name}</p>
+                      {upload.isSample && (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                          Sample
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
+                      {upload.petName && <span className="text-primary font-medium">{upload.petName}</span>}
+                      <span>{upload.date}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    {upload.status === 'ready' ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-green-500/20 text-green-400">
+                        <span className="material-symbols-outlined !text-xs">check_circle</span> Ready
+                      </span>
+                    ) : upload.status === 'uploading' ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 animate-pulse">
+                        <span className="material-symbols-outlined !text-xs rotate-spin">sync</span> Uploading
+                      </span>
+                    ) : upload.status === 'processing' ? (
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1">
+                          <span className="material-symbols-outlined !text-xs text-primary rotate-spin">sync</span>
+                          <span className="text-[10px] font-bold text-primary">{upload.progress?.stage || 'Processing'}</span>
+                          {upload.progress?.percent != null && <span className="text-[10px] text-slate-400">{upload.progress.percent}%</span>}
+                        </div>
+                        {upload.progress?.percent != null && (
+                          <div className="h-1 w-24 bg-slate-700 rounded-full overflow-hidden">
+                            <div className="h-full bg-primary rounded-full transition-all duration-700" style={{ width: `${upload.progress.percent}%` }} />
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-500/20 text-red-400">
+                        <span className="material-symbols-outlined !text-xs">error</span> Error
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        localStorage.setItem('currentSessionId', upload.id);
+                        onAnalyze();
+                      }}
+                      disabled={upload.status !== 'ready'}
+                      className={`font-bold text-xs px-3 py-1.5 rounded-lg transition-all ${upload.status === 'ready'
+                        ? 'text-primary bg-primary/10'
+                        : 'text-slate-500 bg-slate-800 cursor-not-allowed'
+                      }`}
+                    >
+                      View
+                    </button>
+                    {!upload.isSample && (
+                      <button
+                        onClick={() => setDeleteTarget({ id: upload.id, name: upload.name })}
+                        className="p-1.5 rounded-lg text-red-400 bg-red-500/10"
+                      >
+                        <span className="material-symbols-outlined !text-sm">delete</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </section>
 
-      <div className="p-8 rounded-[2.5rem] bg-gradient-to-br from-card-dark to-sidebar-dark border border-primary/10 flex flex-col md:flex-row items-center gap-8 relative overflow-hidden group">
+      <div className="p-4 md:p-8 rounded-2xl md:rounded-[2.5rem] bg-gradient-to-br from-card-dark to-sidebar-dark border border-primary/10 flex flex-col md:flex-row items-center gap-4 md:gap-8 relative overflow-hidden group">
         <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 blur-[100px] -mr-32 -mt-32"></div>
-        <div className="size-20 rounded-3xl bg-primary flex items-center justify-center shrink-0 shadow-2xl shadow-primary/20 rotate-3 group-hover:rotate-0 transition-transform">
+        <div className="size-12 md:size-20 rounded-2xl md:rounded-3xl bg-primary flex items-center justify-center shrink-0 shadow-2xl shadow-primary/20 rotate-3 group-hover:rotate-0 transition-transform">
           <span className="material-symbols-outlined text-background-dark text-4xl font-bold">auto_awesome</span>
         </div>
         <div className="flex-1">

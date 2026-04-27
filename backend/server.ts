@@ -9,6 +9,9 @@ import { analyzeVideo, detectInMosaic } from './processor/videoAnalyzer.ts';
 import { generateHighlights } from './processor/highlightGenerator.ts';
 import { createProxyVideo, extractFrame, extractAndCropFrame, extractMosaicFrames, createMosaic, cropImageWithBox, getVideoDuration } from './processor/videoPreprocessor.ts';
 import { config } from './config.ts';
+import { setFirestoreClient as setPersonaFirestore } from './persona/memoryStore.ts';
+import { queuePersonaJob } from './persona/personaBuilder.ts';
+import { buildPersonaRouter } from './persona/router.ts';
 
 // Performance timing utilities
 interface StageTime {
@@ -46,6 +49,8 @@ const generatedObjectPrefix = process.env.GENERATED_OBJECT_PREFIX || 'uploads/ge
 const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES || `${20 * 1024 * 1024 * 1024}`); // 20GB default
 const resumableChunkBytes = Number(process.env.RESUMABLE_CHUNK_BYTES || `${8 * 1024 * 1024}`); // 8MB default
 const friendProcessingConcurrency = readPositiveIntEnv('FRIEND_PROCESSING_CONCURRENCY', 3);
+const useSessionFirestore = process.env.SESSION_USE_FIRESTORE === 'true';
+const usePersonaFirestore = process.env.PERSONA_USE_FIRESTORE === 'true';
 
 type SampleTarget = {
     sampleId: string;
@@ -81,6 +86,9 @@ const EXAMPLE_VIDEOS: ExampleVideo[] = [
 
 app.use(cors());
 app.use(express.json());
+
+// Persona / Pet AI routes
+app.use('/api', buildPersonaRouter());
 
 // Serve static files from the uploads directory
 app.use('/uploads', express.static(config.uploadDir));
@@ -139,12 +147,18 @@ if (storageBucketName) {
     }
 }
 
-try {
-    firestoreClient = new Firestore({
-        ignoreUndefinedProperties: true,
-    });
-} catch (e) {
-    console.error('Failed to initialize Firestore client:', e);
+if (useSessionFirestore || usePersonaFirestore) {
+    try {
+        firestoreClient = new Firestore({
+            ignoreUndefinedProperties: true,
+        });
+        setPersonaFirestore(usePersonaFirestore ? firestoreClient : null);
+    } catch (e) {
+        console.error('Failed to initialize Firestore client:', e);
+        setPersonaFirestore(null);
+    }
+} else {
+    setPersonaFirestore(null);
 }
 
 if (fs.existsSync(sessionsPath)) {
@@ -168,10 +182,12 @@ if (fs.existsSync(sampleSessionsPath)) {
 
 ensureDirExists(config.outputDir);
 ensureDirExists(config.uploadDir);
-setTimeout(() => {
-    void loadSessionsFromFirestore();
-    void getAllSampleSessions();
-}, 200);
+if (useSessionFirestore) {
+    setTimeout(() => {
+        void loadSessionsFromFirestore();
+        void getAllSampleSessions();
+    }, 200);
+}
 
 function saveSessions() {
     ensureDirExists(config.outputDir);
@@ -194,7 +210,7 @@ function sanitizeForFirestore(obj: any): any {
 }
 
 async function upsertSessionToFirestore(sessionId: string) {
-    if (!firestoreClient) return;
+    if (!useSessionFirestore || !firestoreClient) return;
     const session = sessions[sessionId];
     if (!session) return;
     try {
@@ -223,7 +239,7 @@ function persistSession(sessionId: string): Promise<void> {
 }
 
 async function getSessionFromFirestore(sessionId: string) {
-    if (!firestoreClient) return null;
+    if (!useSessionFirestore || !firestoreClient) return null;
     try {
         const doc = await firestoreClient.collection(sessionCollectionName).doc(sessionId).get();
         if (!doc.exists) return null;
@@ -235,7 +251,7 @@ async function getSessionFromFirestore(sessionId: string) {
 }
 
 async function loadSessionsFromFirestore() {
-    if (!firestoreClient) return;
+    if (!useSessionFirestore || !firestoreClient) return;
     try {
         const snap = await firestoreClient.collection(sessionCollectionName).get();
         const remoteEntries = snap.docs.map((doc) => doc.data()).filter((item) => item?.id);
@@ -515,7 +531,7 @@ async function uploadSampleAssets(sampleId: string, assets: Map<string, string>)
 }
 
 async function upsertSampleSession(sampleSession: any) {
-    if (firestoreClient) {
+    if (useSessionFirestore && firestoreClient) {
         await firestoreClient.collection(sampleCollectionName).doc(sampleSession.id).set(sampleSession, { merge: true });
     }
 
@@ -526,7 +542,7 @@ async function upsertSampleSession(sampleSession: any) {
 }
 
 async function getSampleSessionById(id: string) {
-    if (firestoreClient) {
+    if (useSessionFirestore && firestoreClient) {
         try {
             const doc = await firestoreClient.collection(sampleCollectionName).doc(id).get();
             if (doc.exists) {
@@ -540,7 +556,7 @@ async function getSampleSessionById(id: string) {
 }
 
 async function getAllSampleSessions() {
-    if (firestoreClient) {
+    if (useSessionFirestore && firestoreClient) {
         try {
             const snap = await firestoreClient.collection(sampleCollectionName).get();
             const remote = snap.docs.map((doc) => doc.data());
@@ -783,13 +799,42 @@ app.post('/api/uploads/from-example', async (req, res) => {
         return res.status(400).json({ error: 'Invalid exampleId' });
     }
 
-    if (!storageClient || !storageBucketName) {
-        return res.status(500).json({ error: 'Cloud Storage is not configured on the server.' });
-    }
-
     const now = Date.now();
     const sessionStem = sanitizeFileStem(example.fileName);
     const sessionId = `${now}-${sessionStem}`;
+
+    if (!storageClient || !storageBucketName) {
+        const examplePath = path.resolve(process.cwd(), '../ExampleVideo', example.fileName);
+        if (!fs.existsSync(examplePath)) {
+            return res.status(404).json({ error: `Example video ${example.fileName} not found on the server.` });
+        }
+
+        ensureDirExists(config.uploadDir);
+        const extension = getSafeExtension(example.fileName);
+        const localPath = path.join(config.uploadDir, `${sessionId}${extension}`);
+        try {
+            fs.copyFileSync(examplePath, localPath);
+        } catch (error) {
+            return res.status(500).json({ error: `Failed to prepare local example video: ${(error as Error).message}` });
+        }
+
+        sessions[sessionId] = {
+            id: sessionId,
+            status: 'processing',
+            originalName: example.fileName,
+            petName: petName || example.suggestedPetName,
+            visitorId: visitorId || undefined,
+            path: localPath,
+            mimeType: 'video/mp4',
+            fileSize: fs.statSync(localPath).size,
+            createdAt: new Date().toISOString(),
+            startedAt: now,
+        };
+        persistSession(sessionId);
+        processVideo(sessionId, localPath).catch(console.error);
+        return res.json({ sessionId, status: 'processing' });
+    }
+
     const objectPath = buildUploadObjectPath(sessionId, example.fileName);
 
     sessions[sessionId] = {
@@ -832,12 +877,14 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
 
     const sessionId = path.basename(req.file.path, path.extname(req.file.path));
     const petName = req.body?.petName || '';
+    const visitorId = String(req.body?.visitorId || '').trim();
     sessions[sessionId] = {
         id: sessionId,
         status: 'processing',
         originalName: req.file.originalname,
         path: req.file.path,
         petName: petName,
+        visitorId: visitorId || undefined,
         createdAt: new Date().toISOString(),
         startedAt: Date.now()
     };
@@ -863,14 +910,16 @@ function getPublicUrl(urlOrPath: string | null | undefined) {
 }
 
 function buildSessionResponse(session: any) {
-    const isCloudSession = Boolean(session.objectPath);
+    // Sample sessions already have correct sample-asset URLs — skip objectPath-based rewrites
+    const isSample = Boolean(session.isSample);
+    const isCloudSession = !isSample && Boolean(session.objectPath);
     const videoUrl = isCloudSession
         ? getSessionOriginalAssetUrl(session.id)
         : getPublicUrl(session.videoUrl) || getFileUrl(session.path);
-    const highlightUrl = session.highlightObjectPath
+    const highlightUrl = !isSample && session.highlightObjectPath
         ? getSessionHighlightAssetUrl(session.id)
         : (isCloudSession ? null : (getPublicUrl(session.highlightUrl) || getFileUrl(session.highlightPath)));
-    const coverUrl = session.coverObjectPath
+    const coverUrl = !isSample && session.coverObjectPath
         ? getSessionCoverAssetUrl(session.id)
         : (isCloudSession ? null : getPublicUrl(session.coverUrl));
 
@@ -907,6 +956,105 @@ function buildSessionResponse(session: any) {
         highlightUrl,
         coverUrl
     };
+}
+
+function isValidMediaTime(value: any): value is string {
+    if (typeof value !== 'string' || !value.trim()) return false;
+    if (value.includes('-')) return false;
+    const sec = timeToSeconds(value);
+    return Number.isFinite(sec) && sec >= 0;
+}
+
+function firstValidTime(...values: any[]): string | null {
+    for (const value of values) {
+        if (isValidMediaTime(value)) return value;
+    }
+    return null;
+}
+
+async function repairSessionAssets(sessionId: string): Promise<any> {
+    const session = sessions[sessionId];
+    if (!session || session.status !== 'ready' || !session.analysis) return session;
+
+    const videoPath = [session.proxyPath, session.path]
+        .find((p: any) => typeof p === 'string' && fs.existsSync(p));
+    if (!videoPath) return session;
+
+    let changed = false;
+
+    if (!session.highlightPath && !session.highlightUrl && Array.isArray(session.analysis.highlightTimestamps)) {
+        const repairedHighlight = await generateHighlights(videoPath, session.analysis, config.uploadDir, `${sessionId}-repair`);
+        if (repairedHighlight && repairedHighlight !== videoPath && fs.existsSync(repairedHighlight)) {
+            session.highlightPath = repairedHighlight;
+            session.highlightUrl = getFileUrl(repairedHighlight);
+            session.highlightError = null;
+            changed = true;
+        }
+    }
+
+    if (!session.coverPath && !session.coverUrl) {
+        const coverTs = firstValidTime(
+            session.analysis.coverTimestamp,
+            session.analysis.scenery?.[0]?.originalTime,
+            session.analysis.scenery?.[0]?.timestamp,
+            '0:05'
+        );
+        if (coverTs) {
+            const cover = await extractFrame(videoPath, coverTs, config.uploadDir, 'cover');
+            if (cover && fs.existsSync(cover)) {
+                session.coverPath = cover;
+                session.coverUrl = getFileUrl(cover);
+                changed = true;
+            }
+        }
+    }
+
+    if (Array.isArray(session.analysis.friends)) {
+        for (const friend of session.analysis.friends) {
+            if (friend.url || friend.imageObjectPath) continue;
+            const ts = firstValidTime(
+                friend.best_photo_timestamp,
+                friend.originalTimestamp,
+                ...(Array.isArray(friend.timestamps) ? friend.timestamps.flatMap((t: any) => [t?.originalTime, t?.time]) : []),
+                friend.timestamp
+            );
+            if (!ts) continue;
+            const frame = await extractFrame(videoPath, ts, config.uploadDir, 'friend');
+            if (frame && fs.existsSync(frame)) {
+                friend.url = getFileUrl(frame);
+                changed = true;
+            }
+        }
+    }
+
+    if (Array.isArray(session.analysis.scenery)) {
+        for (const scene of session.analysis.scenery) {
+            if (scene.url || scene.imageObjectPath) continue;
+            const ts = firstValidTime(scene.originalTime, scene.timestamp);
+            if (!ts) continue;
+            const frame = await extractFrame(videoPath, ts, config.uploadDir, 'scene');
+            if (frame && fs.existsSync(frame)) {
+                scene.url = getFileUrl(frame);
+                changed = true;
+            }
+        }
+    }
+
+    if (Array.isArray(session.analysis.dietaryHabits)) {
+        for (const habit of session.analysis.dietaryHabits) {
+            if (habit.url || habit.imageObjectPath) continue;
+            const ts = firstValidTime(habit.originalTime, habit.timestamp);
+            if (!ts) continue;
+            const frame = await extractFrame(videoPath, ts, config.uploadDir, 'food');
+            if (frame && fs.existsSync(frame)) {
+                habit.url = getFileUrl(frame);
+                changed = true;
+            }
+        }
+    }
+
+    if (changed) await persistSession(sessionId);
+    return session;
 }
 
 async function redirectToSignedUrl(
@@ -1191,6 +1339,23 @@ app.get('/api/session/:id', async (req, res) => {
     res.json(buildSessionResponse(session));
 });
 
+app.post('/api/session/:id/repair-assets', async (req, res) => {
+    const sessionId = req.params.id;
+    let session = sessions[sessionId];
+    if (!session) {
+        session = await getSessionFromFirestore(sessionId);
+        if (session) sessions[sessionId] = session;
+    }
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    try {
+        const repaired = await repairSessionAssets(sessionId);
+        res.json(buildSessionResponse(repaired));
+    } catch (error) {
+        console.error(`Failed to repair assets for ${sessionId}:`, error);
+        res.status(500).json({ error: 'Failed to repair session assets' });
+    }
+});
+
 app.delete('/api/session/:id', async (req, res) => {
     const sessionId = req.params.id;
     let session = sessions[sessionId];
@@ -1263,7 +1428,7 @@ app.delete('/api/session/:id', async (req, res) => {
         }
 
         // Firestore cleanup
-        if (firestoreClient) {
+        if (useSessionFirestore && firestoreClient) {
             try {
                 await firestoreClient.collection(sessionCollectionName).doc(sessionId).delete();
             } catch (e) {
@@ -1294,8 +1459,9 @@ app.get('/api/pet-names', (req, res) => {
 
 app.get('/api/sessions', (req, res) => {
     const visitorId = String(req.query.visitorId || '').trim();
+    const allowLocalDemoSessions = process.env.PERSONA_LOCAL_DEMO_FALLBACK !== 'false' && !useSessionFirestore;
     let results = Object.values(sessions);
-    if (visitorId) {
+    if (visitorId && !allowLocalDemoSessions) {
         results = results.filter((s: any) => !s.visitorId || s.visitorId === visitorId);
     }
     res.json(results
@@ -1476,6 +1642,60 @@ function secondsToTime(totalSeconds: number): string {
     const m = Math.floor(totalSeconds / 60);
     const s = Math.floor(totalSeconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function inferVideoDurationFromAnalysis(analysis: any): number {
+    const values: number[] = [];
+    const add = (value: any) => {
+        if (typeof value !== 'string' || !value.trim()) return;
+        const sec = timeToSeconds(value);
+        if (Number.isFinite(sec) && sec > 0) values.push(sec);
+    };
+
+    for (const item of analysis?.narrativeSegments || []) add(item?.timestamp);
+    for (const item of analysis?.moodData || []) add(item?.name);
+    for (const item of analysis?.scenery || []) add(item?.timestamp);
+    for (const item of analysis?.friends || []) {
+        add(item?.timestamp);
+        add(item?.best_photo_timestamp);
+        for (const ts of item?.timestamps || []) add(ts?.time);
+    }
+    for (const item of analysis?.timeline || []) add(item?.time);
+    for (const item of analysis?.highlightTimestamps || []) {
+        add(item?.start);
+        add(item?.end);
+    }
+    for (const item of analysis?.safetyAlerts || []) add(item?.timestamp);
+    for (const item of analysis?.dietaryHabits || []) add(item?.timestamp);
+    add(analysis?.coverTimestamp);
+
+    const max = Math.max(0, ...values);
+    return max > 1 ? Math.ceil(max + 5) : 0;
+}
+
+function sanitizeHighlightTimestamps<T extends Record<string, any>>(highlights: T[] | undefined, videoDuration: number): T[] {
+    if (!Array.isArray(highlights)) return [];
+    const hasDuration = Number.isFinite(videoDuration) && videoDuration > 1;
+    const cleaned: T[] = [];
+
+    for (const clip of highlights) {
+        const rawStart = timeToSeconds(String(clip?.start || ''));
+        const rawEnd = timeToSeconds(String(clip?.end || ''));
+        if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue;
+        if (rawStart < 0 || rawEnd <= rawStart) continue;
+
+        const start = hasDuration ? clamp(rawStart, 0, videoDuration) : rawStart;
+        const end = hasDuration ? clamp(rawEnd, 0, videoDuration) : rawEnd;
+        if (end - start < 1) continue;
+
+        cleaned.push({
+            ...clip,
+            start: secondsToTime(start),
+            end: secondsToTime(end),
+        });
+    }
+
+    return cleaned.sort((a, b) => timeToSeconds(a.start) - timeToSeconds(b.start));
 }
 
 const ALLOWED_TIMELINE_ICONS = new Set([
@@ -2172,11 +2392,11 @@ async function processVideo(sessionId: string, localPathFromUpload?: string) {
             throw new Error('Failed to create local proxy video from source file.');
         }
         logStage('Proxy Video Creation', stageStart);
-        updateProgress('AI Analysis', 10, 1);
+        updateProgress('Gemini 3 Thinking...', 10, 1);
 
         // Stage 2: Get Video Duration
         stageStart = Date.now();
-        const videoDuration = await getVideoDuration(videoPath);
+        const probedVideoDuration = await getVideoDuration(videoPath);
         logStage('Get Video Duration', stageStart);
 
         // Stage 3: Gemini AI Analysis (includes upload, processing wait, and generation)
@@ -2184,12 +2404,18 @@ async function processVideo(sessionId: string, localPathFromUpload?: string) {
         const analysisData = await analyzeVideo(proxyPath);
         logStage('Gemini AI Analysis (total)', stageStart);
 
+        const inferredVideoDuration = inferVideoDurationFromAnalysis(analysisData);
+        const videoDuration = probedVideoDuration > 1 ? probedVideoDuration : inferredVideoDuration;
+        if (probedVideoDuration <= 1 && videoDuration > 1) {
+            console.warn(`[Duration] ffprobe returned ${probedVideoDuration}; using inferred duration ${videoDuration}s from Gemini timestamps.`);
+        }
+
         // Normalize generated signals before any highlight-based mapping.
         analysisData.moodData = normalizeMoodData(analysisData.moodData, videoDuration);
         analysisData.timeline = normalizeTimeline(analysisData.timeline, analysisData.moodData, videoDuration);
 
         // === Highlight duration check and fallback ===
-        let highlights = analysisData.highlightTimestamps || [];
+        let highlights = sanitizeHighlightTimestamps(analysisData.highlightTimestamps || [], videoDuration);
 
         // Calculate total duration
         const calculateDuration = (segs: typeof highlights) =>
@@ -2299,6 +2525,7 @@ async function processVideo(sessionId: string, localPathFromUpload?: string) {
             videoDuration,
             1  // 1 second buffer before alert moment
         );
+        highlights = sanitizeHighlightTimestamps(highlights, videoDuration);
 
         // ========== Final duration check and smart layered trimming ==========
         const finalDuration = calculateDuration(highlights);
@@ -2814,13 +3041,61 @@ async function processVideo(sessionId: string, localPathFromUpload?: string) {
         };
         await persistSession(sessionId);
 
-        const sampleTarget = resolveSampleTarget(sessions[sessionId]);
-        if (sampleTarget) {
-            try {
-                await promoteSessionToSample(sessions[sessionId], sampleTarget);
-                console.log(`[Sample] Promoted session ${sessionId} -> ${sampleTarget.sampleId}`);
-            } catch (e) {
-                console.error(`[Sample] Failed to promote session ${sessionId}:`, e);
+        // ---- Pet AI Persona — async post-processing (non-blocking) ----
+        // Failure here writes personaError on the session but never undoes
+        // the analysis result. Queue runs in-process with isolated try/catch.
+        try {
+            const sessionForPersona = sessions[sessionId];
+            const visitorIdForPersona: string | undefined = sessionForPersona?.visitorId;
+            const petNameForPersona: string | undefined = sessionForPersona?.petName;
+            if (visitorIdForPersona && petNameForPersona && analysisData) {
+                sessions[sessionId].personaProcessed = false;
+                queuePersonaJob(
+                    {
+                        sessionId,
+                        visitorId: visitorIdForPersona,
+                        petName: petNameForPersona,
+                        analysis: analysisData,
+                        durationSeconds: videoDuration,
+                        videoUrl: sessions[sessionId].videoUrl,
+                        coverUrl: sessions[sessionId].coverUrl,
+                    },
+                    (result) => {
+                        sessions[sessionId].petId = result.petId;
+                        sessions[sessionId].personaProcessed = true;
+                        sessions[sessionId].personaProcessedAt = Date.now();
+                        sessions[sessionId].memoriesCreated = result.memoriesCreated;
+                        sessions[sessionId].personaUpdateCard = result.updateCard;
+                        persistSession(sessionId).catch(() => undefined);
+                        console.log(`[Persona] session ${sessionId} → pet ${result.petId} (+${result.memoriesCreated} memories)`);
+                    },
+                    (err) => {
+                        sessions[sessionId].personaProcessed = false;
+                        sessions[sessionId].personaError = err.message;
+                        persistSession(sessionId).catch(() => undefined);
+                    }
+                );
+            } else if (analysisData && !visitorIdForPersona) {
+                console.log(`[Persona] session ${sessionId} skipped — no visitorId on session`);
+            } else if (analysisData && !petNameForPersona) {
+                console.log(`[Persona] session ${sessionId} skipped — no petName on session`);
+            }
+        } catch (personaQueueError) {
+            console.error('[Persona] failed to queue persona job:', personaQueueError);
+        }
+
+        // Auto-promote to sample ONLY in local dev (no STORAGE_BUCKET = local).
+        // On Cloud Run, promotion would overwrite Firestore sample data with
+        // broken session-asset URLs. Samples should only be promoted locally.
+        if (!storageBucketName) {
+            const sampleTarget = resolveSampleTarget(sessions[sessionId]);
+            if (sampleTarget) {
+                try {
+                    await promoteSessionToSample(sessions[sessionId], sampleTarget);
+                    console.log(`[Sample] Promoted session ${sessionId} -> ${sampleTarget.sampleId}`);
+                } catch (e) {
+                    console.error(`[Sample] Failed to promote session ${sessionId}:`, e);
+                }
             }
         }
 

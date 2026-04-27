@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { promisify } from "util";
 import type { AnalysisResult } from "./videoAnalyzer.ts";
+import { FFMPEG_CMD, parseDurationFromMediaInfo, readMediaInfo } from "./mediaTools.ts";
 
 const execPromise = promisify(exec);
 const EXEC_OPTIONS = { maxBuffer: 10 * 1024 * 1024 };
@@ -37,15 +38,10 @@ function formatDuration(seconds: number): string {
 async function isPlayableVideo(filePath: string): Promise<boolean> {
     if (!filePath || !fs.existsSync(filePath)) return false;
     try {
-        const probeCmd = `ffprobe -v error -show_entries stream=codec_type -show_entries format=duration -of json "${filePath}"`;
-        const { stdout } = await execPromise(probeCmd, EXEC_OPTIONS);
-        const parsed = JSON.parse(stdout || "{}");
-        const duration = Number(parsed?.format?.duration || 0);
-        const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
-        const hasVideoStream = streams.some((s: any) => s?.codec_type === "video");
-        return duration > 0.1 && hasVideoStream;
+        const info = await readMediaInfo(filePath);
+        return parseDurationFromMediaInfo(info) > 0.1 && /Video:/i.test(info);
     } catch (error) {
-        console.error("Error validating highlight file with ffprobe:", error);
+        console.error("Error validating highlight file:", error);
         return false;
     }
 }
@@ -94,7 +90,7 @@ export async function generateHighlights(
         let extractStart = Date.now();
         const segmentPromises = analysis.highlightTimestamps.map(async (ts, i) => {
             const segmentPath = path.join(outputDir, `temp_segment_${i}.mp4`);
-            const cmd = `ffmpeg -y -ss ${ts.start} -to ${ts.end} -i "${videoPath}" -c:v libx264 -preset ultrafast -crf 23 -c:a aac "${segmentPath}"`;
+            const cmd = `${FFMPEG_CMD} -y -ss ${ts.start} -to ${ts.end} -i "${videoPath}" -c:v libx264 -preset ultrafast -crf 23 -c:a aac "${segmentPath}"`;
             console.log(`Extracting segment ${i}: ${ts.start} to ${ts.end}`);
             await execPromise(cmd, EXEC_OPTIONS);
             return segmentPath;
@@ -105,11 +101,13 @@ export async function generateHighlights(
         // 2. Concatenate segments
         let concatStart = Date.now();
         const listFilePath = path.join(outputDir, "segments.txt");
-        const listContent = tempFiles.map(f => `file '${f}'`).join("\n");
+        const listContent = tempFiles
+            .map(f => `file '${path.resolve(f).replace(/'/g, "'\\''")}'`)
+            .join("\n");
         fs.writeFileSync(listFilePath, listContent);
 
         console.log("Concatenating segments...");
-        const concatCmd = `ffmpeg -y -f concat -safe 0 -i "${listFilePath}" -c copy -movflags +faststart "${finalHighlightPath}"`;
+        const concatCmd = `${FFMPEG_CMD} -y -f concat -safe 0 -i "${listFilePath}" -c copy -movflags +faststart "${finalHighlightPath}"`;
         await execPromise(concatCmd, EXEC_OPTIONS);
         console.log(`[Timing] Highlight concatenation: ${formatDuration((Date.now() - concatStart) / 1000)}`);
 

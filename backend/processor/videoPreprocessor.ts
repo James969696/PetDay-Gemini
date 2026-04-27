@@ -2,6 +2,13 @@ import { exec } from "child_process";
 import path from "path";
 import fs from "fs";
 import { promisify } from "util";
+import {
+    FFMPEG_CMD,
+    FFPROBE_CMD,
+    parseDimensionsFromMediaInfo,
+    parseDurationFromMediaInfo,
+    readMediaInfo,
+} from "./mediaTools.ts";
 
 const execPromise = promisify(exec);
 const EXEC_OPTIONS = { maxBuffer: 10 * 1024 * 1024 };
@@ -44,7 +51,7 @@ async function getFileSize(filePath: string): Promise<number> {
     }
     // For remote URLs, use ffprobe to get file size
     try {
-        const cmd = `ffprobe -v error -show_entries format=size -of default=noprint_wrappers=1:nokey=1 "${filePath}"`;
+        const cmd = `${FFPROBE_CMD} -v error -show_entries format=size -of default=noprint_wrappers=1:nokey=1 "${filePath}"`;
         const { stdout } = await execPromise(cmd, EXEC_OPTIONS);
         return parseInt(stdout.trim()) || 0;
     } catch {
@@ -84,7 +91,7 @@ export async function createProxyVideo(originalPath: string, outputDir: string):
             } else {
                 // Remote URL: download to local without re-encoding (stream copy)
                 console.log(`[Proxy] ≤500MB remote file — downloading without re-encode`);
-                const command = `ffmpeg -i "${originalPath}" -c copy "${proxyPath}"`;
+                const command = `${FFMPEG_CMD} -i "${originalPath}" -c copy "${proxyPath}"`;
                 await execPromise(command, { ...EXEC_OPTIONS, timeout: 300000 });
                 console.log(`[Timing] createProxyVideo completed: ${formatDuration((Date.now() - proxyStart) / 1000)} (download only)`);
                 return proxyPath;
@@ -96,7 +103,7 @@ export async function createProxyVideo(originalPath: string, outputDir: string):
             // Get original bitrate to use as ceiling
             let originalBitrate = 2500000;
             try {
-                const probeCmd = `ffprobe -v error -show_entries format=bit_rate -of default=noprint_wrappers=1:nokey=1 "${originalPath}"`;
+                const probeCmd = `${FFPROBE_CMD} -v error -show_entries format=bit_rate -of default=noprint_wrappers=1:nokey=1 "${originalPath}"`;
                 const { stdout } = await execPromise(probeCmd, EXEC_OPTIONS);
                 const parsed = parseInt(stdout.trim());
                 if (parsed > 0) originalBitrate = parsed;
@@ -106,7 +113,7 @@ export async function createProxyVideo(originalPath: string, outputDir: string):
             const targetBitrate = Math.min(originalBitrate, 2500000);
             console.log(`[Proxy] Original bitrate: ${(originalBitrate / 1000).toFixed(0)}kbps, target: ${(targetBitrate / 1000).toFixed(0)}kbps`);
 
-            const command = `ffmpeg -i "${originalPath}" -vf "scale=-2:720" -c:v libx264 -b:v ${targetBitrate} -maxrate ${targetBitrate} -bufsize ${targetBitrate * 2} -preset fast -c:a aac -b:a 128k "${proxyPath}"`;
+            const command = `${FFMPEG_CMD} -i "${originalPath}" -vf "scale=-2:720" -c:v libx264 -b:v ${targetBitrate} -maxrate ${targetBitrate} -bufsize ${targetBitrate * 2} -preset fast -c:a aac -b:a 128k "${proxyPath}"`;
             await execPromise(command, { ...EXEC_OPTIONS, timeout: 600000 });
             console.log(`[Timing] createProxyVideo completed: ${formatDuration((Date.now() - proxyStart) / 1000)} (re-encoded)`);
             console.log("Compressed proxy video generated successfully.");
@@ -127,7 +134,7 @@ export async function extractFrame(videoPath: string, timestamp: string, outputD
     console.log(`Extracting frame at ${timestamp} for ${label}`);
 
     // -ss timestamp -i input -vframes 1 captures one frame
-    const command = `ffmpeg -y -ss ${timestamp} -i "${videoPath}" -vframes 1 -q:v 2 "${outputPath}"`;
+    const command = `${FFMPEG_CMD} -y -ss ${timestamp} -i "${videoPath}" -vframes 1 -q:v 2 "${outputPath}"`;
 
     try {
         await execPromise(command, EXEC_OPTIONS);
@@ -212,7 +219,7 @@ export async function extractMosaicFrames(
         const framePath = path.join(outputDir, `${label}-mosaic-${i}-${uniqueId}.jpg`);
 
         try {
-            await execPromise(`ffmpeg -y -ss ${adjustedSec} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`, EXEC_OPTIONS);
+            await execPromise(`${FFMPEG_CMD} -y -ss ${adjustedSec} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`, EXEC_OPTIONS);
             return framePath;
         } catch (error) {
             console.error(`[Mosaic] Failed to extract frame ${i} at ${adjustedSec}s:`, error);
@@ -248,7 +255,7 @@ export async function createMosaic(
     }
 
     const inputs = mosaicPaths.slice(0, 9).map(p => `-i "${p}"`).join(' ');
-    const command = `ffmpeg -y ${inputs} -filter_complex "[0][1][2]hstack=3[row0];[3][4][5]hstack=3[row1];[6][7][8]hstack=3[row2];[row0][row1][row2]vstack=3" -q:v 2 "${outputPath}"`;
+    const command = `${FFMPEG_CMD} -y ${inputs} -filter_complex "[0][1][2]hstack=3[row0];[3][4][5]hstack=3[row1];[6][7][8]hstack=3[row2];[row0][row1][row2]vstack=3" -q:v 2 "${outputPath}"`;
 
     console.log(`[Mosaic] Creating 3x3 grid: ${path.basename(outputPath)}`);
 
@@ -271,15 +278,13 @@ export async function cropImageWithBox(
     const uniqueId = Math.random().toString(36).substring(7);
     const croppedPath = path.join(outputDir, `${filename}-${label}-cropped-${uniqueId}.jpg`);
 
-    // Get image dimensions using ffprobe
-    const probeCommand = `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${imagePath}"`;
     let width = 1920, height = 1080;
 
     try {
-        const { stdout } = await execPromise(probeCommand, EXEC_OPTIONS);
-        const dims = stdout.trim().split('x').map(Number);
-        if (dims.length === 2 && dims[0] > 0 && dims[1] > 0) {
-            [width, height] = dims;
+        const dims = parseDimensionsFromMediaInfo(await readMediaInfo(imagePath));
+        if (dims) {
+            width = dims.width;
+            height = dims.height;
         }
     } catch (e) {
         console.error("Error getting image dimensions, using defaults:", e);
@@ -309,7 +314,7 @@ export async function cropImageWithBox(
 
     console.log(`[Crop] Cropping ${path.basename(imagePath)} with box [${box}] -> ${cropW}x${cropH}+${cropX}+${cropY}`);
 
-    const cropCommand = `ffmpeg -y -i "${imagePath}" -vf "crop=${cropW}:${cropH}:${cropX}:${cropY}" -q:v 2 "${croppedPath}"`;
+    const cropCommand = `${FFMPEG_CMD} -y -i "${imagePath}" -vf "crop=${cropW}:${cropH}:${cropX}:${cropY}" -q:v 2 "${croppedPath}"`;
 
     try {
         await execPromise(cropCommand, EXEC_OPTIONS);
@@ -323,15 +328,13 @@ export async function cropImageWithBox(
 }
 
 export async function getVideoDimensions(videoPath: string): Promise<{ width: number, height: number }> {
-    const command = `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${videoPath}"`;
     try {
-        const { stdout } = await execPromise(command, EXEC_OPTIONS);
-        const [width, height] = stdout.trim().split('x').map(Number);
-        return { width, height };
+        const dims = parseDimensionsFromMediaInfo(await readMediaInfo(videoPath));
+        if (dims) return dims;
     } catch (e) {
         console.error("Error getting video dimensions:", e);
-        return { width: 1920, height: 1080 }; // Fallback
     }
+    return { width: 1920, height: 1080 }; // Fallback
 }
 
 export async function extractAndCropFrame(
@@ -368,7 +371,7 @@ export async function extractAndCropFrame(
         const burstPath = path.join(outputDir, `${filename}-${label}-burst-${i}-${uniqueId}.jpg`);
 
         // Extract UNCROPPED frame — no crop filter
-        const command = `ffmpeg -y -ss ${currentSS} -i "${videoPath}" -vframes 1 -q:v 2 "${burstPath}"`;
+        const command = `${FFMPEG_CMD} -y -ss ${currentSS} -i "${videoPath}" -vframes 1 -q:v 2 "${burstPath}"`;
 
         try {
             await execPromise(command, EXEC_OPTIONS);
@@ -453,7 +456,7 @@ export async function extractAndCropFrame(
     const cropY = Math.round(ymin);
 
     const croppedPath = path.join(outputDir, `${filename}-${label}-cropped-${uniqueId}.jpg`);
-    const cropCommand = `ffmpeg -y -i "${bestFrame.path}" -vf "crop=${cropW}:${cropH}:${cropX}:${cropY}" -q:v 2 "${croppedPath}"`;
+    const cropCommand = `${FFMPEG_CMD} -y -i "${bestFrame.path}" -vf "crop=${cropW}:${cropH}:${cropX}:${cropY}" -q:v 2 "${croppedPath}"`;
 
     try {
         await execPromise(cropCommand, EXEC_OPTIONS);
@@ -475,10 +478,8 @@ function timeToSeconds(timeStr: string): number {
 }
 
 export async function getVideoDuration(videoPath: string): Promise<number> {
-    const command = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
     try {
-        const { stdout } = await execPromise(command, EXEC_OPTIONS);
-        return parseFloat(stdout.trim()) || 0;
+        return parseDurationFromMediaInfo(await readMediaInfo(videoPath));
     } catch (error) {
         console.error(`Error getting video duration:`, error);
         return 0;

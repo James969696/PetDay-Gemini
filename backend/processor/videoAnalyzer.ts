@@ -22,6 +22,8 @@ const GEMINI_GENERATE_TIMEOUT_MS = readPositiveIntEnv('GEMINI_GENERATE_TIMEOUT_M
 const GEMINI_GENERATE_ATTEMPTS = readPositiveIntEnv('GEMINI_GENERATE_ATTEMPTS', 2);
 const GEMINI_IMAGE_TIMEOUT_MS = readPositiveIntEnv('GEMINI_IMAGE_TIMEOUT_MS', 45 * 1000);
 const GEMINI_IMAGE_ATTEMPTS = readPositiveIntEnv('GEMINI_IMAGE_ATTEMPTS', 2);
+const GEMINI_ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-3.1-pro-preview';
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || GEMINI_ANALYSIS_MODEL;
 
 export interface AnalysisResult {
     title: string;
@@ -132,7 +134,7 @@ async function withRetry<T>(
 }
 
 export async function analyzeVideo(videoPath: string): Promise<AnalysisResult> {
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_ANALYSIS_MODEL });
     const analyzeStart = Date.now();
 
     console.log(`[Timing] analyzeVideo started`);
@@ -345,7 +347,7 @@ Analyze this pet POV video and provide a detailed report (English only). Include
 }
 
 export async function detectObjectInFrame(imagePath: string, objectName: string): Promise<[number, number, number, number] | null> {
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_IMAGE_MODEL });
 
     const prompt = `
         This is a photo from a Pet's Point-of-View (POV). 
@@ -421,7 +423,7 @@ export async function detectInMosaic(
     animalType: string,
     visualTraits: string
 ): Promise<{ cellIndex: number; box: [number, number, number, number]; confidence: number } | null> {
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_IMAGE_MODEL });
 
     const prompt = `
 This is a 3x3 grid of 9 video frames (cells numbered 1-9, left-to-right, top-to-bottom).
@@ -546,7 +548,7 @@ export async function validateAnimalInFrame(
     animalType: string,
     hintBox?: [number, number, number, number]
 ): Promise<{ isPresent: boolean; confidence: number; box?: [number, number, number, number] }> {
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_IMAGE_MODEL });
 
     let hintInstruction = '';
     if (hintBox) {

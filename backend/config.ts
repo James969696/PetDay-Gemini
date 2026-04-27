@@ -4,13 +4,16 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const backendRoot = path.basename(__dirname) === 'dist'
+  ? path.resolve(__dirname, '..')
+  : __dirname;
 
-dotenv.config({ path: path.resolve(__dirname, '../petday---ai-pet-pov-insights/.env.local') });
+dotenv.config({ path: path.resolve(backendRoot, '../petday---ai-pet-pov-insights/.env.local') });
 
 export const config = {
   geminiApiKey: process.env.GEMINI_API_KEY || '',
-  uploadDir: path.resolve(__dirname, './uploads'),
-  outputDir: path.resolve(__dirname, './outputs'),
+  uploadDir: path.resolve(backendRoot, './uploads'),
+  outputDir: path.resolve(backendRoot, './outputs'),
   isCloud: false,
 };
 

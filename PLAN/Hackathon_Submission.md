@@ -127,3 +127,97 @@ PetDay 将数小时长的原始 POV 视频转化为全面的 **“宠物日记�
 1.  **健康量化**：利用视频计算步数、跳跃高度，并检测跛行/步态变化，以进行早期兽医预警。
 2.  **社交分享**：“PetDay 社区”——直接从仪表盘自动分享你的高光时刻到 TikTok/Reels。
 3.  **实时互动**：与直播摄像头集成，基于 AI *此时此刻* 看到的内容，让主人通过 AI 语音与宠物交谈。
+
+
+
+## Inspiration
+
+Have you ever wondered what your dog or cat *really* does when you're not looking? We strapped a GoPro to our pets' collars full of excitement, hoping for a "Secret Life of Pets" movie. Instead, we got 2 hours of nauseatingly shaky footage, 45 minutes of staring at a wall, and endless shots of grass.
+
+**The realization:** Raw POV footage is unwatchable for humans, but it's a goldmine of data for AI. We didn't want to watch the footage; we wanted *insights*. We wanted to know: "Did he make any friends?", "Was he happy at the park?", "Did he eat something he shouldn't have?". Thus, **PetDay** was born—an AI analyst that watches the boring parts so you don't have to, turning raw chaos into a structured, heartwarming daily report.
+
+## What it does
+
+PetDay transforms raw, hours-long POV video into a comprehensive **"Pet Diary"** and **"Highlight Reel"**:
+
+1.  **AI-Generated Diary**: Writes a first-person narrative journal entry *as the pet* (e.g., "Use a warm, curious tone: 'Ooh! That squirrel is back!'").
+2.  **Smart Highlight Reel**: Automatically identifies and cuts the best 60 seconds of action, social interaction, and scenic views, discarding the shakiness.
+3.  **"Friends" Detection**: Identifies every animal the pet meets (e.g., "Golden Retriever", "Siamese Cat"), logs the timestamp, and assesses the relationship status ("Bestie" vs "Rival").
+4.  **Safety & Health Alerts**: Flags dangerous behavior (eating unknown objects, high jumps, aggression) without human review.
+5.  **Aesthetic Scenery Capture**: Detects moments of "Visual Appreciation" (when the pet stops to look at a sunset or landscape) and saves them as "Zen Moments".
+
+## How we built it
+
+**Architecture:**
+
+```
+Video Upload → Preprocessing (FFmpeg) → Gemini AI Analysis → Highlight Curation → FFmpeg Compilation → Result Delivery
+```
+
+**AI Core**: Gemini 3 Flash processes the entire video in a **single multimodal API call** — analyzing visual frames (~1 fps) and audio simultaneously. One carefully engineered prompt extracts all analysis dimensions (narrative, mood, friends, scenery, safety, timeline, highlight timestamps, dietary habits) as structured JSON in one pass. Supporting Gemini calls handle friend portrait detection via 3×3 frame mosaics.
+
+**Backend**: Express.js + TypeScript on Google Cloud Run. FFmpeg handles all video manipulation — proxy generation, frame extraction, mosaic creation for friend portrait selection, segment trimming, and final highlight compilation.
+
+**Frontend**: React 19 + Vite on Firebase Hosting. Recharts for interactive mood visualization, Framer Motion for animations.
+
+**Cloud Infrastructure**: Google Cloud Storage for video/asset persistence, Firestore for session metadata, Cloud Run for auto-scaling compute.
+
+**Highlight Priority System** — not all moments are equal:
+
+| Priority | Moment Type |
+| ----------- | ----------- |
+| 100 | Safety-critical moments |
+| 95 | Friend + Scenery combinations |
+| 85 | Scenery near a friend interaction |
+| 80 | Friend encounters |
+| 75 | High-quality scenic views |
+| 60 | Eating/drinking moments |
+| 50 | General scenery |
+| 10–30 | Other AI-detected moments |
+
+The system guarantees coverage: every detected friend gets at least one clip, scenery is always represented, and friend+scenery combinations are prioritized as the most emotionally resonant content.
+
+**Friend Portrait Extraction Pipeline** — extracting a clear portrait of another animal from a shaky pet POV camera is surprisingly hard. Our multi-stage pipeline:
+
+1. Gemini identifies all animal friends with timestamps and visual traits
+2. Extract a 3×3 mosaic of 9 candidate frames around the best timestamps
+3. Gemini analyzes the mosaic to find the clearest cell
+4. FFmpeg crops the portrait using bounding box coordinates
+5. Multiple fallback layers ensure we always return a usable result
+
+## Challenges we ran into
+
+**POV Camera Is the Worst Camera.** Pet POV footage breaks every assumption of traditional video analysis. The camera is at ground level, shakes constantly, and the most important subjects appear at unpredictable angles. We had to teach Gemini that a blurry shape at the edge of frame might be the pet's best friend — this required extensive prompt engineering with explicit POV-aware constraints.
+
+**The "Best Photo" Paradox.** The moment a pet interacts most closely with a friend is rarely the moment with the clearest photo of that friend (the pet is often too close, looking down, or moving). We had to separate "best interaction timestamp" from "best portrait timestamp" and build a multi-stage mosaic analysis pipeline.
+
+**Structured Output Reliability.** Getting Gemini to consistently return valid JSON with precise timestamps across 30+ minute videos required extensive prompt iteration. We implemented retry logic with exponential backoff, timeout protection at every stage, and graceful degradation.
+
+**Cloud Run Ephemeral Storage.** Processed videos disappeared after redeployment. The fix: all assets persisted to GCS, and Firestore writes must be `await`ed (not fire-and-forget) because Cloud Run instances shut down before async writes complete.
+
+**Balancing Highlight Duration.** A 60-second highlight from a 30-minute video means cutting 97% of footage. The challenge isn't finding good moments — it's choosing *which* good moments to keep.
+
+## Accomplishments that we're proud of
+
+- **Single-Call Comprehensive Analysis**: One Gemini API call extracts narrative, mood curve, friend social graph, scenery highlights, safety alerts, activity timeline, dietary habits, and highlight timestamps simultaneously — no multi-pass processing needed.
+- **3-Minute End-to-End Pipeline**: Optimized from an initial 6–7 minutes on Cloud Run through adaptive preprocessing (≤500MB videos skip re-encoding), parallel segment extraction via `Promise.all`, and concurrent final processing steps.
+- **Robust Friend Portrait System**: Despite the extreme difficulty of extracting clear animal photos from a shaky POV camera, our mosaic-based pipeline with multi-layer fallbacks reliably produces usable friend portraits.
+- **Intelligent Curation, Not Just Detection**: Our highlight reel understands that a quiet moment of a cat and its friend watching a sunset together (priority 95) is more meaningful than a solo run across the yard (priority 30).
+- **Production-Ready Cloud Architecture**: The system handles videos from 30 seconds to 60+ minutes, supports resumable uploads for files up to 20GB, auto-scales on Cloud Run, and persists all data reliably across deployments.
+
+## What we learned
+
+- **Gemini's multimodal capabilities are transformative**: Processing an entire video with audio context in a single API call produces far richer analysis than frame-by-frame approaches. The model genuinely understands temporal relationships and emotional context.
+- **Prompt engineering is architecture**: The difference between a good prompt and a great prompt isn't marginal — it's the difference between "detected 2 animals" and "identified Frosty the tabby cat, relationship: Bestie, interaction: 45 seconds of mutual grooming."
+- **Graceful degradation matters more than peak performance**: The system that *always* returns something useful beats the system that *sometimes* returns something perfect.
+- **Cloud-native design pays off from day one**: Building on Cloud Run + GCS + Firestore from the start meant we could handle any video length without architectural changes.
+- **The hardest AI problem isn't analysis — it's curation**: Gemini can detect everything in a video. The real challenge is deciding what matters most and presenting it as a coherent story.
+
+## What's next for PetDay — AI Pet POV Video Insights
+
+- **Real-Time Streaming Analysis**: Process live pet camera feeds for instant alerts (safety hazards, friend arrivals) instead of post-recording analysis
+- **Longitudinal Pet Diary**: Track a pet's social relationships and mood patterns over weeks and months — see how friendships evolve and seasonal behavior changes
+- **Multi-Pet Household Support**: Cross-reference footage from multiple pets in the same household to build a complete family social graph
+- **Veterinary Integration**: Export behavioral and dietary reports in formats useful for veterinary checkups
+- **Community Features**: Expand the Discovery feed into a full social platform where pet owners can follow each other's pets and organize meetups based on friendship compatibility
+- **Hardware Partnerships**: Collaborate with pet camera manufacturers to optimize video format and frame rate for AI analysis

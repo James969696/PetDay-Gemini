@@ -19,11 +19,12 @@ async function testKey() {
 
     console.log(`正在使用 Key 进行测试: ${apiKey.substring(0, 8)}...`);
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const modelName = process.env.GEMINI_ANALYSIS_MODEL || "gemini-3.1-pro-preview";
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     try {
         const result = await model.generateContent("你好，请回复 'API Key 正常' 如果你能看到这条消息。");
-        console.log("✅ 响应成功:", result.response.text());
+        console.log(`✅ ${modelName} 响应成功:`, result.response.text());
     } catch (error) {
         console.error("❌ API Key 验证失败:", (error as Error).message);
     }

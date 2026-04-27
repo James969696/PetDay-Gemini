@@ -16,9 +16,10 @@ import {
 
 interface AnalysisProps {
   onBack?: () => void;
+  onNavigate?: (page: import('../types').Page) => void;
 }
 
-const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
+const Analysis: React.FC<AnalysisProps> = ({ onBack, onNavigate }) => {
   const [analysis, setAnalysis] = useState<AnalysisData | null>(null);
   const [sessionData, setSessionData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -109,11 +110,28 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
         const response = await fetch(apiUrl(`/api/session/${sessionId}`));
         const data = await response.json();
         if (data.status === 'ready') {
-          setSessionData(data);
-          setAnalysis(data.analysis);
-          const hasHighlight = Boolean(data.highlightUrl);
+          let readyData = data;
+          const missingInlineMedia =
+            !readyData.highlightUrl ||
+            !readyData.coverUrl ||
+            readyData.analysis?.scenery?.some?.((item: any) => !item.url) ||
+            readyData.analysis?.friends?.some?.((item: any) => !item.url) ||
+            readyData.analysis?.dietaryHabits?.some?.((item: any) => !item.url);
+
+          if (missingInlineMedia) {
+            try {
+              const repairResponse = await fetch(apiUrl(`/api/session/${sessionId}/repair-assets`), { method: 'POST' });
+              if (repairResponse.ok) readyData = await repairResponse.json();
+            } catch (repairError) {
+              console.warn('Asset repair skipped:', repairError);
+            }
+          }
+
+          setSessionData(readyData);
+          setAnalysis(readyData.analysis);
+          const hasHighlight = Boolean(readyData.highlightUrl);
           setShowOriginalVideo(!hasHighlight);
-          setVideoWarning(hasHighlight ? null : (data.highlightError || 'AI highlight is unavailable for this session. Showing the original video.'));
+          setVideoWarning(hasHighlight ? null : (readyData.highlightError || 'AI highlight is unavailable for this session. Showing the original video.'));
         } else if (data.status === 'error') {
           setError(data.error || 'Analysis failed');
         } else {
@@ -243,6 +261,45 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
       label: event.label || 'Selected activity',
       time: activityOriginalTime
     });
+  };
+
+  const handleSafetyAlertClick = (alert: { timestamp: string; message: string }) => {
+    if (!alert.timestamp) return;
+
+    // If already viewing original, just seek directly
+    if (showOriginalVideo) {
+      syncVideoToChart(alert.timestamp, alert.timestamp);
+      return;
+    }
+
+    // Try to map to highlight time using highlightTimestamps segments
+    const segments = analysis?.highlightTimestamps || [];
+    const alertSec = timeToSeconds(alert.timestamp);
+    let highlightOffset = 0;
+    let mappedTime: string | null = null;
+
+    for (const seg of segments) {
+      const segStart = timeToSeconds(seg.start);
+      const segEnd = timeToSeconds(seg.end);
+      if (alertSec >= segStart && alertSec <= segEnd) {
+        const sec = highlightOffset + (alertSec - segStart);
+        const m = Math.floor(sec / 60);
+        const s = Math.round(sec % 60);
+        mappedTime = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        break;
+      }
+      highlightOffset += (segEnd - segStart);
+    }
+
+    if (mappedTime) {
+      syncVideoToChart(mappedTime, alert.timestamp);
+    } else {
+      // Not in highlight — show prompt to switch to original
+      setPendingOriginalActivity({
+        label: alert.message || 'Safety alert',
+        time: alert.timestamp
+      });
+    }
   };
 
   const handleSwitchToOriginalForActivity = () => {
@@ -378,7 +435,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
   if (error || !analysis) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#0F1115]">
-        <div className="bg-red-500/10 border border-red-500/20 p-12 rounded-[3rem] text-center max-w-lg">
+        <div className="bg-red-500/10 border border-red-500/20 p-8 md:p-12 rounded-2xl md:rounded-[3rem] text-center max-w-lg">
           <div className="size-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
             <span className="material-symbols-outlined text-red-500 text-4xl">error</span>
           </div>
@@ -608,7 +665,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
   };
 
   return (
-    <div className="p-4 md:p-8 lg:p-12 max-w-[1600px] mx-auto min-h-screen pb-32">
+    <div className="p-4 md:p-8 lg:p-12 pt-16 md:pt-4 lg:pt-12 max-w-[1600px] mx-auto min-h-screen pb-32">
 
       {/* HEADER SECTION */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-8 mb-12">
@@ -629,6 +686,20 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
             {analysis.title}
           </motion.h1>
           <div className="flex items-center gap-4">
+            {/* Ask My Pet (persona chat) */}
+            {onNavigate && sessionData?.petId && (
+              <button
+                onClick={async () => {
+                  const { setActivePetId } = await import('../lib/personaState');
+                  setActivePetId(sessionData.petId);
+                  onNavigate('pet-chat');
+                }}
+                className="flex items-center gap-3 bg-primary/15 border border-primary/30 text-primary px-6 py-4 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-primary hover:text-background-dark transition-all"
+              >
+                <span className="material-symbols-outlined text-lg">forum</span> Ask {sessionData?.petName || 'My Pet'}
+              </button>
+            )}
+
             {/* Share Button */}
             <button
               onClick={() => setShowShareModal(true)}
@@ -678,7 +749,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
         <div className="lg:col-span-8 space-y-10">
 
           {/* Video Source Toggle - above video, aligned with Share button */}
-          <div className="flex justify-end -mt-[6.25rem] -mb-4">
+          <div className="flex justify-end mb-2 lg:-mt-[6.25rem] lg:-mb-4">
             <div className="flex items-center bg-surface-dark rounded-2xl border border-white/10 p-1.5">
               <button
                 onClick={() => {
@@ -734,7 +805,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
           </div>
 
           {/* PREMIUM VIDEO PLAYER */}
-          <section className="relative aspect-video bg-black rounded-[3rem] overflow-hidden border border-white/5 shadow-2xl group ring-1 ring-white/10">
+          <section className="relative aspect-video bg-black rounded-2xl md:rounded-[3rem] overflow-hidden border border-white/5 shadow-2xl group ring-1 ring-white/10">
             <video
               ref={videoRef}
               src={currentVideoSrc}
@@ -818,7 +889,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
           </section>
 
           {/* INTEGRATED MOOD & EVENT TIMELINE */}
-          <section className="bg-surface-dark rounded-[3rem] border border-white/5 p-10 shadow-2xl space-y-10 relative overflow-hidden">
+          <section className="bg-surface-dark rounded-2xl md:rounded-[3rem] border border-white/5 p-4 md:p-10 shadow-2xl space-y-10 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-5">
               <Clock size={120} />
             </div>
@@ -935,13 +1006,13 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
                 {/* Navigation Arrows for Scroll */}
                 <button
                   onClick={() => scrollContainerRef.current?.scrollBy({ left: -300, behavior: 'smooth' })}
-                  className="absolute left-[10px] top-[128px] -translate-y-1/2 size-10 bg-[#F2CC0D] text-black rounded-full flex items-center justify-center shadow-2xl opacity-0 group-hover/timeline:opacity-100 transition-opacity z-10"
+                  className="absolute left-[10px] top-[128px] -translate-y-1/2 size-10 bg-[#F2CC0D] text-black rounded-full flex items-center justify-center shadow-2xl opacity-100 md:opacity-0 md:group-hover/timeline:opacity-100 transition-opacity z-10"
                 >
                   <ChevronLeft size={24} />
                 </button>
                 <button
                   onClick={() => scrollContainerRef.current?.scrollBy({ left: 300, behavior: 'smooth' })}
-                  className="absolute right-[10px] top-[128px] -translate-y-1/2 size-10 bg-[#F2CC0D] text-black rounded-full flex items-center justify-center shadow-2xl opacity-0 group-hover/timeline:opacity-100 transition-opacity z-10"
+                  className="absolute right-[10px] top-[128px] -translate-y-1/2 size-10 bg-[#F2CC0D] text-black rounded-full flex items-center justify-center shadow-2xl opacity-100 md:opacity-0 md:group-hover/timeline:opacity-100 transition-opacity z-10"
                 >
                   <ChevronRight size={24} />
                 </button>
@@ -1029,7 +1100,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
           </section>
 
           {/* SCENERY INTELLIGENCE (Moved from Right Column) */}
-          <section className="bg-surface-dark rounded-[3rem] border border-white/5 p-10 shadow-2xl">
+          <section className="bg-surface-dark rounded-2xl md:rounded-[3rem] border border-white/5 p-4 md:p-10 shadow-2xl">
             <header className="flex items-center justify-between mb-8">
               <div className="flex items-center gap-4">
                 <div className="size-10 bg-white/5 rounded-xl flex items-center justify-center text-white/20">
@@ -1074,7 +1145,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
         <aside className="lg:col-span-4 space-y-10 lg:-mt-6">
 
           {/* AI NARRATIVE CARD */}
-          <section className="bg-gradient-to-br from-[#F2CC0D] to-[#E5C10C] rounded-[3rem] p-10 text-black shadow-2xl relative overflow-hidden group">
+          <section className="bg-gradient-to-br from-[#F2CC0D] to-[#E5C10C] rounded-2xl md:rounded-[3rem] p-4 md:p-10 text-black shadow-2xl relative overflow-hidden group">
             <div className="absolute top-[-20px] right-[-20px] opacity-10 transform -rotate-12 group-hover:rotate-0 transition-transform duration-700">
               <Dog size={200} />
             </div>
@@ -1088,7 +1159,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
                   <p className="text-[10px] font-bold text-black/40 uppercase tracking-widest mt-0.5">Narrative Insight</p>
                 </div>
               </div>
-              <p className="font-black leading-[1.4] italic text-2xl tracking-tight">
+              <p className="font-black leading-[1.45] italic text-lg md:text-xl tracking-normal">
                 "{analysis.aiNote}"
               </p>
               <div className="pt-8 border-t border-black/10 flex items-center justify-between">
@@ -1099,7 +1170,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
           </section>
 
           {/* FRIENDS ENCOUNTERED (Simplified List) */}
-          <section className="bg-surface-dark rounded-[3rem] border border-white/5 p-10 shadow-2xl">
+          <section className="bg-surface-dark rounded-2xl md:rounded-[3rem] border border-white/5 p-4 md:p-10 shadow-2xl">
             <header className="flex items-center justify-between mb-8">
               <div className="flex items-center gap-4">
                 <div className="size-10 bg-white/5 rounded-xl flex items-center justify-center text-white/20">
@@ -1203,7 +1274,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
 
           {/* DIETARY HABITS CARD (Renamed & Reordered) */}
           {analysis?.dietaryHabits && analysis.dietaryHabits.length > 0 && (
-            <section className="bg-white/5 backdrop-blur-3xl rounded-[3rem] border border-white/5 p-10 shadow-2xl relative overflow-hidden group">
+            <section className="bg-white/5 backdrop-blur-3xl rounded-2xl md:rounded-[3rem] border border-white/5 p-4 md:p-10 shadow-2xl relative overflow-hidden group">
               <header className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
                   <div className="size-10 bg-white/5 rounded-xl flex items-center justify-center text-white/20">
@@ -1257,7 +1328,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   whileHover={{ scale: 1.02 }}
-                  onClick={() => syncVideoToChart(alert.timestamp)}
+                  onClick={() => handleSafetyAlertClick(alert)}
                   className={`p-6 rounded-[2rem] border cursor-pointer transition-all flex items-start gap-4 ${alert.type === 'danger'
                     ? 'bg-red-500/10 border-red-500/20 hover:bg-red-500/20'
                     : 'bg-[#F2CC0D]/10 border-[#F2CC0D]/20 hover:bg-[#F2CC0D]/20'
@@ -1298,15 +1369,15 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
               initial={{ opacity: 0, scale: 0.9, y: 30 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 30 }}
-              className="relative w-full max-w-6xl h-[85vh] bg-[#1A1D23] border border-white/10 rounded-[4rem] overflow-hidden shadow-2xl flex flex-col"
+              className="relative w-full max-w-6xl h-[85vh] bg-[#1A1D23] border border-white/10 rounded-2xl md:rounded-[4rem] overflow-hidden shadow-2xl flex flex-col"
             >
-              <header className="p-10 border-b border-white/5 flex items-center justify-between">
-                <div className="flex items-center gap-5">
-                  <div className="size-16 bg-[#F2CC0D]/10 rounded-[2rem] flex items-center justify-center text-[#F2CC0D] border border-[#F2CC0D]/20">
-                    <Users size={32} />
+              <header className="p-4 md:p-10 border-b border-white/5 flex items-center justify-between">
+                <div className="flex items-center gap-3 md:gap-5">
+                  <div className="size-10 md:size-16 bg-[#F2CC0D]/10 rounded-xl md:rounded-[2rem] flex items-center justify-center text-[#F2CC0D] border border-[#F2CC0D]/20">
+                    <Users size={32} className="hidden md:block" /><Users size={20} className="md:hidden" />
                   </div>
                   <div>
-                    <h2 className="text-4xl font-black tracking-tight text-white uppercase italic">Social Bureau</h2>
+                    <h2 className="text-2xl md:text-4xl font-black tracking-tight text-white uppercase italic">Social Bureau</h2>
                     <p className="text-white/40 text-[10px] font-bold uppercase tracking-[0.2em] mt-1 flex items-center gap-2">
                       <Activity size={12} fill="currentColor" /> Advanced Behavioral Interaction Analysis
                     </p>
@@ -1320,8 +1391,8 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
                 </button>
               </header>
 
-              <div className="flex-1 overflow-y-auto p-10 space-y-8 no-scrollbar">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="flex-1 overflow-y-auto p-4 md:p-10 space-y-8 no-scrollbar">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
                   {analysis?.friends?.map((friend, idx) => {
                     const rel = getRelationshipConfig(friend.relationshipStatus);
                     // Get all interaction timestamps
@@ -1336,7 +1407,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: idx * 0.1 }}
-                        className="bg-white/5 border border-white/10 rounded-[3rem] p-8 flex flex-col md:flex-row gap-8 hover:border-[#F2CC0D]/30 transition-all group"
+                        className="bg-white/5 border border-white/10 rounded-2xl md:rounded-[3rem] p-4 md:p-8 flex flex-col md:flex-row gap-4 md:gap-8 hover:border-[#F2CC0D]/30 transition-all group"
                       >
                         <div className="size-32 rounded-[2rem] overflow-hidden bg-slate-900 border-2 border-white/5 shrink-0">
                           {friend.url ? (
@@ -1457,7 +1528,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
               initial={{ opacity: 0, scale: 0.9, y: 30 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 30 }}
-              className="relative w-full max-w-7xl h-[80vh] bg-[#0F1115] border border-white/5 rounded-[3.5rem] overflow-hidden shadow-2xl flex flex-col"
+              className="relative w-full max-w-7xl h-[80vh] bg-[#0F1115] border border-white/5 rounded-2xl md:rounded-[3.5rem] overflow-hidden shadow-2xl flex flex-col"
             >
               <header className="p-8 flex items-center justify-between border-b border-white/5">
                 <div className="flex items-center gap-4">
@@ -1792,7 +1863,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
               </div>
 
               {/* Right: Social Intelligence */}
-              <div className="flex-1 p-10 md:p-12 flex flex-col justify-center space-y-8">
+              <div className="flex-1 p-4 md:p-12 flex flex-col justify-center space-y-8">
                 <header>
                   <div className="flex items-center gap-3 mb-4">
                     {(() => {
@@ -1805,7 +1876,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
                     })()}
                     <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">{selectedFriend.type}</span>
                   </div>
-                  <h2 className="text-4xl font-black tracking-tight text-white mb-4">{selectedFriend.name}</h2>
+                  <h2 className="text-2xl md:text-4xl font-black tracking-tight text-white mb-4">{selectedFriend.name}</h2>
                   <div className="p-4 bg-white/5 border border-white/5 rounded-2xl italic text-sm text-white/80 leading-relaxed">
                     "{selectedFriend.interactionNature || "A brief encounter in the neighborhood universe."}"
                   </div>
@@ -2058,7 +2129,7 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
           animate={{ opacity: 1, y: 0 }}
           className="mt-16 mb-32"
         >
-          <div className="bg-[#1A1D23] border border-white/10 rounded-[2.5rem] p-8 md:p-10">
+          <div className="bg-[#1A1D23] border border-white/10 rounded-2xl md:rounded-[2.5rem] p-4 md:p-10">
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
               <div className="flex items-center gap-4">
@@ -2167,8 +2238,8 @@ const Analysis: React.FC<AnalysisProps> = ({ onBack }) => {
       )}
 
       {/* FOOTER NAV / QUICK ACTIONS */}
-      <footer className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50">
-        <div className="bg-[#1A1D23]/80 backdrop-blur-2xl border border-white/10 px-8 py-4 rounded-[2.5rem] shadow-2xl flex items-center gap-8">
+      <footer className="fixed bottom-4 md:bottom-10 left-1/2 -translate-x-1/2 z-50">
+        <div className="bg-[#1A1D23]/80 backdrop-blur-2xl border border-white/10 px-4 md:px-8 py-3 md:py-4 rounded-2xl md:rounded-[2.5rem] shadow-2xl flex items-center gap-4 md:gap-8">
           <button onClick={() => onBack ? onBack() : window.history.back()} className="flex items-center gap-2 text-slate-400 hover:text-white transition-all font-black uppercase text-[10px] tracking-widest">
             <ChevronLeft size={16} /> Back
           </button>

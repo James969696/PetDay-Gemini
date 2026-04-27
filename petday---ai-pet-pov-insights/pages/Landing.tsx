@@ -95,9 +95,9 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
             <a className="text-sm font-bold text-slate-400 hover:text-primary transition-colors" href="#how-it-works">How it Works</a>
             <a className="text-sm font-bold text-slate-400 hover:text-primary transition-colors" href="#stories">Stories</a>
           </nav>
-          <div className="flex items-center gap-4">
-            <button className="text-sm font-bold text-slate-300 hover:text-white transition-colors px-4">Log in</button>
-            <button onClick={onStart} className="bg-primary text-background-dark px-8 py-3 rounded-full text-sm font-black hover:shadow-2xl hover:shadow-primary/40 transition-all hover:-translate-y-0.5 active:translate-y-0">
+          <div className="flex items-center gap-2 md:gap-4">
+            <button className="text-sm font-bold text-slate-300 hover:text-white transition-colors px-2 md:px-4 hidden md:block">Log in</button>
+            <button onClick={onStart} className="bg-primary text-background-dark px-4 py-2 md:px-8 md:py-3 rounded-full text-xs md:text-sm font-black hover:shadow-2xl hover:shadow-primary/40 transition-all hover:-translate-y-0.5 active:translate-y-0">
               Launch App
             </button>
           </div>
@@ -105,7 +105,7 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
       </header>
 
       {/* Hero Section */}
-      <section className="relative pt-48 pb-32 px-6 overflow-hidden">
+      <section className="relative pt-24 md:pt-48 pb-16 md:pb-32 px-4 md:px-6 overflow-hidden">
         {/* Background Ambience */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-full overflow-hidden pointer-events-none opacity-30">
           <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-primary/10 rounded-full blur-[160px] -mr-96 -mt-96"></div>
@@ -142,14 +142,14 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
 
             {/* Action Buttons */}
             <div className="flex flex-wrap justify-center gap-5">
-              <button 
+              <button
                 onClick={onStart}
-                className="bg-primary text-background-dark px-10 py-5 rounded-2xl text-lg font-black flex items-center justify-center gap-3 hover:shadow-2xl hover:shadow-primary/30 transition-all hover:-translate-y-1 active:translate-y-0 group"
+                className="bg-primary text-background-dark px-6 py-3 md:px-10 md:py-5 rounded-2xl text-base md:text-lg font-black flex items-center justify-center gap-3 hover:shadow-2xl hover:shadow-primary/30 transition-all hover:-translate-y-1 active:translate-y-0 group"
               >
                 Unlock Their World
                 <span className="material-symbols-outlined text-2xl group-hover:translate-x-1 transition-transform">arrow_forward</span>
               </button>
-              <button className="bg-white/5 border border-white/10 px-10 py-5 rounded-2xl text-lg font-black flex items-center justify-center gap-3 hover:bg-white/10 transition-all">
+              <button className="bg-white/5 border border-white/10 px-6 py-3 md:px-10 md:py-5 rounded-2xl text-base md:text-lg font-black flex items-center justify-center gap-3 hover:bg-white/10 transition-all">
                 Watch Sample
               </button>
             </div>
@@ -172,8 +172,8 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
 
           {/* Featured Showcase Card - Centered within the flow */}
           <div className="relative group max-w-6xl mx-auto">
-            <div className="absolute -inset-4 bg-primary/10 rounded-[4rem] blur-3xl group-hover:bg-primary/20 transition-all duration-1000"></div>
-            <div className="relative rounded-[3.5rem] overflow-hidden border border-white/10 shadow-3xl aspect-[21/9] bg-surface-dark">
+            <div className="absolute -inset-4 bg-primary/10 rounded-2xl md:rounded-[4rem] blur-3xl group-hover:bg-primary/20 transition-all duration-1000"></div>
+            <div className="relative rounded-2xl md:rounded-[3.5rem] overflow-hidden border border-white/10 shadow-3xl aspect-[21/9] bg-surface-dark">
               <img 
                 src="https://images.unsplash.com/photo-1558929996-da64ba858215?q=80&w=1600" 
                 alt="Pet POV" 
@@ -182,7 +182,7 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
               <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/20 to-transparent"></div>
               
               {/* Floating AI Vision Elements */}
-              <div className="absolute top-10 left-10 flex flex-col gap-4">
+              <div className="absolute top-10 left-10 flex-col gap-4 hidden md:flex">
                 <div className="p-4 bg-black/60 backdrop-blur-xl border border-white/10 rounded-2xl animate-float shadow-2xl">
                   <div className="flex items-center gap-3">
                     <div className="size-8 rounded-full bg-primary/20 flex items-center justify-center text-primary">
@@ -207,13 +207,13 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
                 </div>
               </div>
 
-              <div className="absolute bottom-10 left-10 right-10 flex flex-col md:flex-row md:items-end justify-between gap-8">
+              <div className="absolute bottom-4 left-4 right-4 md:bottom-10 md:left-10 md:right-10 flex flex-col md:flex-row md:items-end justify-between gap-4 md:gap-8">
                 <div className="text-left">
                   <div className="flex items-center gap-3 mb-4">
                     <span className="px-3 py-1 bg-primary text-background-dark text-[10px] font-black uppercase rounded-lg">LIVE ANALYSIS</span>
                     <span className="text-white/40 text-xs font-bold font-mono">REC 00:04:22:15</span>
                   </div>
-                  <h3 className="text-4xl font-black text-white mb-2">Cooper's Morning Social</h3>
+                  <h3 className="text-xl md:text-4xl font-black text-white mb-2">Cooper's Morning Social</h3>
                   <p className="text-slate-300 font-medium max-w-lg">Capturing the first meeting of the day with his favorite park friend.</p>
                 </div>
                 
@@ -237,10 +237,10 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-center mb-16">
             <div className="relative max-w-2xl w-full">
-              <div className="absolute inset-0 bg-primary/20 rounded-[3rem] blur-3xl opacity-20"></div>
-              <img src="/cam.jpg" alt="PetDay Camera Design" className="relative w-full rounded-[2.5rem] border border-white/10 shadow-2xl" />
-              <div className="absolute inset-0 rounded-[2.5rem] bg-gradient-to-t from-black/90 via-black/50 to-transparent"></div>
-              <div className="absolute bottom-0 left-0 right-0 p-10 lg:p-14 text-center">
+              <div className="absolute inset-0 bg-primary/20 rounded-2xl md:rounded-[3rem] blur-3xl opacity-20"></div>
+              <img src="/cam.jpg" alt="PetDay Camera Design" className="relative w-full rounded-2xl md:rounded-[2.5rem] border border-white/10 shadow-2xl" />
+              <div className="absolute inset-0 rounded-2xl md:rounded-[2.5rem] bg-gradient-to-t from-black/90 via-black/50 to-transparent"></div>
+              <div className="absolute bottom-0 left-0 right-0 p-6 md:p-10 lg:p-14 text-center">
                 <div className="text-primary font-black text-sm mb-4 uppercase tracking-[0.4em]">The Experience</div>
                 <h2 className="text-3xl lg:text-5xl font-black mb-4 tracking-tight text-white">Walk a mile in their paws.</h2>
                 <p className="text-sm lg:text-base text-white/70 leading-relaxed max-w-xl mx-auto">Simply attach a lightweight camera to your pet's collar, go about your day, and let our AI translate their world for you.</p>
@@ -253,7 +253,7 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
               { step: '02', title: 'AI Storyteller', desc: 'Gemini AI spots friends, mood peaks, and heart-warming highlights.', icon: 'psychology' },
               { step: '03', title: 'Relive the Magic', desc: 'Get a cinematic highlight reel and insights into their hidden daily life.', icon: 'auto_awesome' },
             ].map((item, idx) => (
-              <div key={idx} className="group p-10 rounded-[3rem] bg-background-dark border border-white/5 hover:border-primary/20 transition-all text-center relative overflow-hidden">
+              <div key={idx} className="group p-6 md:p-10 rounded-2xl md:rounded-[3rem] bg-background-dark border border-white/5 hover:border-primary/20 transition-all text-center relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
                   <span className="text-8xl font-black text-white">{item.step}</span>
                 </div>
@@ -276,7 +276,7 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
             <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 mb-8">
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Advanced Analytics</span>
             </div>
-            <h2 className="text-5xl lg:text-6xl font-black mb-12 leading-[1.1] tracking-tighter">Everything they see, <br/>now understood.</h2>
+            <h2 className="text-3xl md:text-5xl lg:text-6xl font-black mb-12 leading-[1.1] tracking-tighter">Everything they see, <br/>now understood.</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
                 { title: 'Mood Mapping', desc: 'Visualize your pet\u2019s emotional rollercoaster throughout the day with detailed charts.', icon: 'trending_up' },
@@ -298,8 +298,8 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
             {/* Activity & Mood Sync Card */}
             <div className="relative h-full">
-              <div className="absolute inset-0 bg-primary/20 rounded-[3rem] blur-3xl opacity-30"></div>
-              <div className="relative p-8 rounded-[3rem] bg-surface-dark border border-white/10 shadow-3xl overflow-hidden h-full">
+              <div className="absolute inset-0 bg-primary/20 rounded-2xl md:rounded-[3rem] blur-3xl opacity-30"></div>
+              <div className="relative p-4 md:p-8 rounded-2xl md:rounded-[3rem] bg-surface-dark border border-white/10 shadow-3xl overflow-hidden h-full">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex flex-col gap-1 text-left">
                     <h4 className="font-black text-lg text-white uppercase tracking-tight">Activity & Mood Sync</h4>
@@ -381,13 +381,13 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
                     </div>
                     <button
                       onClick={() => scrollContainerRef.current?.scrollBy({ left: -300, behavior: 'smooth' })}
-                      className="absolute left-[10px] top-[128px] -translate-y-1/2 size-10 bg-primary text-background-dark rounded-full flex items-center justify-center shadow-2xl opacity-0 group-hover/timeline:opacity-100 transition-opacity z-10"
+                      className="absolute left-[10px] top-[128px] -translate-y-1/2 size-10 bg-primary text-background-dark rounded-full flex items-center justify-center shadow-2xl opacity-100 md:opacity-0 md:group-hover/timeline:opacity-100 transition-opacity z-10"
                     >
                       <span className="material-symbols-outlined !text-xl">chevron_left</span>
                     </button>
                     <button
                       onClick={() => scrollContainerRef.current?.scrollBy({ left: 300, behavior: 'smooth' })}
-                      className="absolute right-[10px] top-[128px] -translate-y-1/2 size-10 bg-primary text-background-dark rounded-full flex items-center justify-center shadow-2xl opacity-0 group-hover/timeline:opacity-100 transition-opacity z-10"
+                      className="absolute right-[10px] top-[128px] -translate-y-1/2 size-10 bg-primary text-background-dark rounded-full flex items-center justify-center shadow-2xl opacity-100 md:opacity-0 md:group-hover/timeline:opacity-100 transition-opacity z-10"
                     >
                       <span className="material-symbols-outlined !text-xl">chevron_right</span>
                     </button>
@@ -485,7 +485,7 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
                 </div>
 
                 {/* Frosty - Featured Friend Card */}
-                <div className="bg-white/5 border border-white/10 rounded-[2rem] p-6 hover:border-primary/30 transition-all group mb-5">
+                <div className="bg-white/5 border border-white/10 rounded-2xl md:rounded-[2rem] p-4 md:p-6 hover:border-primary/30 transition-all group mb-5">
                   <div className="flex gap-5">
                     <div className="size-24 rounded-2xl overflow-hidden bg-slate-900 border-2 border-white/5 shrink-0">
                       <img src="https://petday-api-707197108816.us-central1.run.app/api/sample-asset/sample-luna/friend-friend-Frosty-mosaic-3-bbel0o-friend-cropped-198slu.jpg" alt="Frosty" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
@@ -551,7 +551,7 @@ const Landing: React.FC<LandingProps> = ({ onStart }) => {
           <div className="flex justify-center mt-12">
             <button
               onClick={onStart}
-              className="bg-primary text-background-dark px-10 py-5 rounded-2xl text-lg font-black flex items-center justify-center gap-3 hover:shadow-2xl hover:shadow-primary/30 transition-all hover:-translate-y-1 active:translate-y-0 group"
+              className="bg-primary text-background-dark px-6 py-3 md:px-10 md:py-5 rounded-2xl text-base md:text-lg font-black flex items-center justify-center gap-3 hover:shadow-2xl hover:shadow-primary/30 transition-all hover:-translate-y-1 active:translate-y-0 group"
             >
               Unlock Their World
               <span className="material-symbols-outlined text-2xl group-hover:translate-x-1 transition-transform">arrow_forward</span>
