@@ -13,7 +13,14 @@ import Sidebar from './components/Sidebar';
 import { Page } from './types';
 
 const App: React.FC = () => {
-  const [currentPage, setCurrentPage] = useState<Page>('landing');
+  const initialPage = (() => {
+    if (typeof window === 'undefined') return 'landing' as Page;
+    const page = new URLSearchParams(window.location.search).get('page') as Page | null;
+    return page && ['landing', 'gallery', 'dashboard', 'analysis', 'settings', 'discovery', 'pets', 'pet-profile', 'pet-chat'].includes(page)
+      ? page
+      : 'landing';
+  })();
+  const [currentPage, setCurrentPage] = useState<Page>(initialPage);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleNavigate = (page: Page) => {

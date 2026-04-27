@@ -16,6 +16,14 @@ export function apiUrl(path: string): string {
 // ---------------- Visitor identity (matches Dashboard.tsx) ----------------
 
 export function getVisitorId(): string {
+  const urlVisitorId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('visitorId')?.trim()
+    : '';
+  if (urlVisitorId) {
+    localStorage.setItem('petday_visitor_id', urlVisitorId);
+    return urlVisitorId;
+  }
+
   let id = localStorage.getItem('petday_visitor_id');
   if (!id) {
     id = `v-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;

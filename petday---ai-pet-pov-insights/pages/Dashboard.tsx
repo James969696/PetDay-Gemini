@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { apiUrl, fetchPets } from '../lib/api';
+import { apiUrl, fetchPets, getVisitorId } from '../lib/api';
 import { setActivePetId } from '../lib/personaState';
 import { Page } from '../types';
 
@@ -8,15 +8,6 @@ interface DashboardProps {
   onAnalyze: () => void;
   onGallery?: () => void;
   onNavigate?: (page: Page) => void;
-}
-
-function getVisitorId(): string {
-  let id = localStorage.getItem('petday_visitor_id');
-  if (!id) {
-    id = `v-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    localStorage.setItem('petday_visitor_id', id);
-  }
-  return id;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ onAnalyze, onGallery, onNavigate }) => {
